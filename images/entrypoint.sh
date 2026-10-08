@@ -218,6 +218,27 @@ sync_owner_url() {
     fi
 }
 
+# Remove a stale single-writer lock. Upstream refuses to start when
+# <data>/harness.lock exists, and the lock survives pod restarts on the
+# persistent volume. A lock whose pid is dead (always the case in a fresh
+# container after a clean shutdown was interrupted) is safe to drop; a live
+# pid means a real second writer, so the lock is kept and boot fails loudly.
+clear_stale_lock() {
+    local lock="${DATA_DIR}/harness.lock"
+    local pid
+
+    if [ ! -e "${lock}" ]; then
+        return 0
+    fi
+    pid="$(tr -cd '0-9' < "${lock}" 2>/dev/null)" || pid=""
+    if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+        warn "${lock} is held by live pid ${pid}; refusing to start a second writer"
+        return 0
+    fi
+    log "removing stale lock ${lock} (pid ${pid:-unknown} is not running)"
+    rm -f "${lock}" || warn "could not remove ${lock}"
+}
+
 launch() {
     local port="${PI_POCKET_PORT:-8787}"
 
@@ -240,6 +261,7 @@ launch() {
     # This shell stays PID 1: it publishes the owner link once the server has
     # written config.json, then waits on the filter so signals and exit codes
     # propagate and no unreaped children are left behind.
+    clear_stale_lock
     /usr/local/bin/pi-pocket-log-filter \
         --host 0.0.0.0 \
         --port "${port}" \
