@@ -13,6 +13,7 @@
     running: null,
     authorizedKeys: '',
     knownHosts: '',
+    ownerLoginUrl: '',
     busy: false
   };
 
@@ -20,6 +21,9 @@
 
   var elementIds = [
     'message', 'unlock', 'token-form', 'token', 'unlock-button', 'app',
+    'tab-workspace', 'tab-configure', 'panel-workspace', 'panel-configure',
+    'owner-card', 'owner-missing', 'owner-link', 'owner-open', 'owner-copy', 'owner-qr',
+    'agent-frame', 'frame-wrap', 'workspace-fullscreen', 'workspace-external', 'workspace-reload',
     'status-state', 'status-ready', 'status-restarted',
     'action-start', 'action-stop', 'action-restart', 'action-refresh',
     'api-key-rows', 'authorized-keys', 'known-hosts',
@@ -103,11 +107,85 @@
     state.token = '';
     state.config = null;
     state.running = null;
+    state.ownerLoginUrl = '';
     elements.token.value = '';
     elements.app.hidden = true;
     elements.unlock.hidden = false;
     elements['api-key-rows'].replaceChildren();
+    elements['agent-frame'].removeAttribute('src');
     updateControls();
+  }
+
+  function selectTab(name) {
+    var workspace = name === 'workspace';
+    elements['tab-workspace'].setAttribute('aria-selected', workspace ? 'true' : 'false');
+    elements['tab-configure'].setAttribute('aria-selected', workspace ? 'false' : 'true');
+    elements['panel-workspace'].hidden = !workspace;
+    elements['panel-workspace'].setAttribute('aria-hidden', workspace ? 'false' : 'true');
+    elements['panel-configure'].hidden = workspace;
+    elements['panel-configure'].setAttribute('aria-hidden', workspace ? 'true' : 'false');
+  }
+
+  // Draw the owner sign-in link as a QR code. qrcodegen is a vendored,
+  // dependency-free encoder (MIT, Project Nayuki) loaded via script tag.
+  function drawQR(url) {
+    var canvas = elements['owner-qr'];
+    var context = canvas.getContext('2d');
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    var qr = qrcodegen.QrCode.encodeText(url, qrcodegen.QrCode.Ecc.MEDIUM);
+    var border = 2;
+    var scale = Math.floor(canvas.width / (qr.size + border * 2));
+    var offset = Math.floor((canvas.width - (qr.size + border * 2) * scale) / 2);
+    context.fillStyle = '#000000';
+    for (var y = 0; y < qr.size; y++) {
+      for (var x = 0; x < qr.size; x++) {
+        if (qr.getModule(x, y)) {
+          context.fillRect(offset + (x + border) * scale, offset + (y + border) * scale, scale, scale);
+        }
+      }
+    }
+  }
+
+  function renderOwner(url) {
+    state.ownerLoginUrl = (typeof url === 'string') ? url : '';
+    var has = state.ownerLoginUrl !== '';
+    elements['owner-card'].hidden = !has;
+    elements['owner-missing'].hidden = has;
+    if (!has) {
+      return;
+    }
+    var link = elements['owner-link'];
+    link.href = state.ownerLoginUrl;
+    link.textContent = 'Open in new tab';
+    try {
+      drawQR(state.ownerLoginUrl);
+    } catch (err) {
+      var context = elements['owner-qr'].getContext('2d');
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, elements['owner-qr'].width, elements['owner-qr'].height);
+    }
+  }
+
+  function frameURL() {
+    if (state.config !== null && typeof state.config.pocketUrl === 'string') {
+      return state.config.pocketUrl;
+    }
+    return '';
+  }
+
+  function loadFrame(url) {
+    var frame = elements['agent-frame'];
+    var target = (typeof url === 'string' && url !== '') ? url : frameURL();
+    if (target === '') {
+      setMessage('The agent URL is not configured.', 'error');
+      return;
+    }
+    if (frame.getAttribute('src') !== target) {
+      frame.setAttribute('src', target);
+    } else {
+      frame.contentWindow.location.reload();
+    }
   }
 
   async function unlock(event) {
@@ -129,6 +207,8 @@
       elements.token.value = '';
       elements.unlock.hidden = true;
       elements.app.hidden = false;
+      selectTab('workspace');
+      loadFrame();
       setMessage('', '');
       elements['action-refresh'].focus();
     } catch (err) {
@@ -152,6 +232,7 @@
 
   function renderConfig(config) {
     renderAPIKeys(config);
+    renderOwner(config.ownerLoginUrl);
     var authorizedKeys = typeof config.authorizedKeys === 'string' ? config.authorizedKeys : '';
     var knownHosts = typeof config.knownHosts === 'string' ? config.knownHosts : '';
     elements['authorized-keys'].value = authorizedKeys;
@@ -394,9 +475,53 @@
     }
   }
 
+  async function copyOwnerLink() {
+    if (state.ownerLoginUrl === '') {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(state.ownerLoginUrl);
+      setMessage('Owner link copied. It is the owner key: keep it private.', 'ok');
+    } catch (err) {
+      setMessage('Copy failed; use the link in a new tab instead.', 'error');
+    }
+  }
+
+  function toggleFullscreen() {
+    var wrap = elements['frame-wrap'];
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+      return;
+    }
+    if (typeof wrap.requestFullscreen === 'function') {
+      var result = wrap.requestFullscreen();
+      if (result && typeof result.catch === 'function') {
+        result.catch(function () {
+          setMessage('Full screen was refused by the browser.', 'error');
+        });
+      }
+    } else {
+      setMessage('Full screen is not supported here; use the new-tab view.', 'error');
+    }
+  }
+
   function init() {
     cacheElements();
     elements['token-form'].addEventListener('submit', unlock);
+    elements['tab-workspace'].addEventListener('click', function () { selectTab('workspace'); });
+    elements['tab-configure'].addEventListener('click', function () { selectTab('configure'); });
+    elements['owner-open'].addEventListener('click', function () { loadFrame(state.ownerLoginUrl); });
+    elements['owner-copy'].addEventListener('click', copyOwnerLink);
+    elements['workspace-fullscreen'].addEventListener('click', toggleFullscreen);
+    elements['workspace-external'].addEventListener('click', function () {
+      var target = frameURL();
+      if (target === '') {
+        setMessage('The agent URL is not configured.', 'error');
+        return;
+      }
+      window.open(target, '_blank', 'noopener');
+    });
+    elements['workspace-reload'].addEventListener('click', function () { loadFrame(); });
     elements['action-start'].addEventListener('click', function () { deploymentAction('start'); });
     elements['action-stop'].addEventListener('click', function () { deploymentAction('stop'); });
     elements['action-restart'].addEventListener('click', function () { deploymentAction('restart'); });

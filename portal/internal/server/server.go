@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -101,10 +102,11 @@ func (s *Server) originAllowed(origin string) bool {
 }
 
 var staticFiles = map[string]string{
-	"/":           "index.html",
-	"/index.html": "index.html",
-	"/app.js":     "app.js",
-	"/app.css":    "app.css",
+	"/":             "index.html",
+	"/index.html":   "index.html",
+	"/app.js":       "app.js",
+	"/app.css":      "app.css",
+	"/qrcodegen.js": "qrcodegen.js",
 }
 
 // handleStatic serves only the embedded SPA files.
@@ -140,11 +142,25 @@ func contentTypeFor(name string) string {
 const contentSecurityPolicy = "default-src 'none'; script-src 'self'; style-src 'self'; " +
 	"img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
+// frameSources is the frame-src allowlist for the embedded agent iframe. It is
+// derived from POCKET_URL at startup; empty when no agent URL is configured.
+func frameSources(pocketURL string) string {
+	u, err := url.Parse(pocketURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
 // withSecurityHeaders applies the portal's response hardening headers.
 func (s *Server) withSecurityHeaders(next http.Handler) http.Handler {
+	policy := contentSecurityPolicy
+	if src := frameSources(s.cfg.PocketURL); src != "" {
+		policy += "; frame-src " + src
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", contentSecurityPolicy)
+		h.Set("Content-Security-Policy", policy)
 		h.Set("Cache-Control", "no-store")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")

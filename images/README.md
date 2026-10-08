@@ -71,6 +71,20 @@ node /opt/pi-pocket/bin/pi-pocket.js \
 | `/tmp` | scratch space for builds and tools | writable `emptyDir` |
 | `/run/pocket-config` | runtime secret (below) | read-only secret mount, **whole directory, never `subPath`** |
 
+### Portal iframe embedding
+
+The portal embeds the agent in an `iframe`. Two upstream defaults forbid that,
+so the entrypoint applies `images/embed-patch.sh` when `POCKET_FRAME_ANCESTORS`
+names the portal's https origin (the chart sets it from the portal ingress):
+
+- `frame-ancestors 'self'` in `src/server/http/assets.ts` gains the portal origin;
+- `SameSite=Lax` in `src/server/auth.ts` becomes `SameSite=None`, without which
+  the session cookie is withheld inside the cross-site frame and logins never stick.
+
+The patch is fail-closed: unless each pattern is found exactly as often as the
+pinned upstream commit has it (once / twice), nothing is modified and boot
+continues without embedding. `Secure` cookies still require HTTPS.
+
 ### Owner sign-in token
 
 The launcher writes the owner's sign-in link to its output; that token is the owner's key,
@@ -150,6 +164,12 @@ Never work around the profiles with `privileged: true`, extra host devices, or h
 
 Mount the secret (or projected secret) as a whole directory. `subPath` mounts do not
 receive updates and are not supported.
+
+The entrypoint also publishes the owner sign-in link (`${POCKET_PUBLIC_URL}/login?token=…`)
+into the `owner-login-url` entry of the runtime secret (needs `RUNTIME_SECRET`,
+`POCKET_PUBLIC_URL` and a mounted service account; skipped for local runs). The
+portal shows it and its QR code to authenticated operators. Provider key values
+are never written to the secret — only this one URL.
 
 | File | Handling |
 | --- | --- |

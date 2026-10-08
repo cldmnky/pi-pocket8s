@@ -64,6 +64,9 @@ class ChartTests(unittest.TestCase):
         env = {item["name"]: item for item in pocket["containers"][0]["env"]}
         for name, field in (("POD_NAMESPACE", "metadata.namespace"), ("POD_NAME", "metadata.name"), ("POD_UID", "metadata.uid")):
             self.assertEqual(env[name]["valueFrom"]["fieldRef"]["fieldPath"], field)
+        self.assertEqual(env["RUNTIME_SECRET"]["value"], "pi-pocket-runtime")
+        self.assertEqual(env["POCKET_PUBLIC_URL"]["value"], "https://pocket.apps.voyager.blahonga.me")
+        self.assertEqual(env["POCKET_FRAME_ANCESTORS"]["value"], "https://pocket-portal.apps.voyager.blahonga.me")
         portal = find(docs, "Deployment", "pi-pocket-portal")["spec"]["template"]["spec"]
         self.assertFalse(portal["containers"][0]["securityContext"]["allowPrivilegeEscalation"])
         self.assertTrue(portal["containers"][0]["securityContext"]["readOnlyRootFilesystem"])

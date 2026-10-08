@@ -223,6 +223,7 @@ type configViewResponse struct {
 	AuthorizedKeys  string          `json:"authorizedKeys"`
 	KnownHosts      string          `json:"knownHosts"`
 	PocketURL       string          `json:"pocketUrl"`
+	OwnerLoginURL   string          `json:"ownerLoginUrl"`
 }
 
 type statusResponse struct {
@@ -399,6 +400,25 @@ func TestStaticSPA(t *testing.T) {
 	}
 	if contentType := style.Header.Get("Content-Type"); !strings.Contains(contentType, "text/css") {
 		t.Errorf("GET /app.css Content-Type = %q, want text/css", contentType)
+	}
+
+	qr := env.request(http.MethodGet, "/qrcodegen.js", "", "", nil)
+	if qr.Status != http.StatusOK {
+		t.Fatalf("GET /qrcodegen.js status = %d, want 200", qr.Status)
+	}
+	if contentType := qr.Header.Get("Content-Type"); !strings.Contains(contentType, "text/javascript") {
+		t.Errorf("GET /qrcodegen.js Content-Type = %q, want text/javascript", contentType)
+	}
+	if !strings.Contains(string(qr.Body), "QrCode") {
+		t.Error("qrcodegen.js does not define QrCode")
+	}
+
+	policy := index.Header.Get("Content-Security-Policy")
+	if !strings.Contains(policy, "frame-src https://pi.example.com") {
+		t.Errorf("Content-Security-Policy = %q, want frame-src for the agent origin", policy)
+	}
+	if !strings.Contains(html, "agent-frame") || !strings.Contains(html, "owner-qr") {
+		t.Error("index.html does not contain the embedded workspace and owner QR elements")
 	}
 
 	for _, path := range []string{"/nope", "/../portal", "/api/unknown"} {

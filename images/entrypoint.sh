@@ -16,6 +16,7 @@ readonly DATA_DIR="${PI_POCKET_DIR:-${HOME_DIR}/.pi-pocket}"
 readonly CONFIG_DIR="/run/pocket-config"
 readonly SA_DIR="/var/run/secrets/kubernetes.io/serviceaccount"
 readonly API_KEYS_FILE="${CONFIG_DIR}/api-keys.json"
+readonly OWNER_LOGIN_KEY="owner-login-url"
 
 # The only secret keys that may become environment variables. Anything else in
 # api-keys.json is ignored, so the runtime secret cannot inject arbitrary env.
@@ -172,6 +173,51 @@ EOF
     log "wrote kubeconfig for namespace ${namespace} (service account token is live, not a snapshot)"
 }
 
+# Publish the owner sign-in link to the runtime secret so the portal can show
+# it (and its QR code) to authenticated operators. Provider key *values* are
+# never written here: only this one URL, which the portal already has the
+# rights to read. Runs at container start; a rotation re-syncs on restart.
+sync_owner_url() {
+    local secret="${RUNTIME_SECRET:-}" public="${POCKET_PUBLIC_URL:-}"
+    local config="${DATA_DIR}/config.json"
+
+    if [ -z "${secret}" ] || [ -z "${public}" ]; then
+        return 0
+    fi
+    if [ ! -r "${SA_DIR}/token" ] || [ ! -r "${SA_DIR}/ca.crt" ] || [ -z "${KUBERNETES_SERVICE_HOST:-}" ]; then
+        log "no service account API; skipping owner link sync"
+        return 0
+    fi
+    if [ ! -r "${config}" ]; then
+        log "no ${config} yet; skipping owner link sync"
+        return 0
+    fi
+
+    local token url encoded body code
+    token="$(jq -r '.ownerToken // empty' "${config}" 2>/dev/null)" || token=""
+    if [ -z "${token}" ]; then
+        warn "could not read ownerToken from ${config}"
+        return 0
+    fi
+    url="${public%/}/login?token=${token}"
+    encoded="$(printf '%s' "${url}" | base64 -w0)"
+    body="$(jq -n --arg v "${encoded}" --arg k "${OWNER_LOGIN_KEY}" '{data: {($k): $v}}' 2>/dev/null)" || body=""
+    if [ -z "${body}" ]; then
+        warn "could not encode owner link"
+        return 0
+    fi
+    code="$(curl -s -o /dev/null -w '%{http_code}' --cacert "${SA_DIR}/ca.crt" \
+        -H "Authorization: Bearer $(cat "${SA_DIR}/token")" \
+        -H 'Content-Type: application/merge-patch+json' -X PATCH \
+        --data "${body}" --max-time 10 \
+        "https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT_HTTPS:-${KUBERNETES_SERVICE_PORT:-443}}/api/v1/namespaces/${POD_NAMESPACE:-default}/secrets/${secret}" 2>/dev/null)" || code=""
+    if [ "${code}" = "200" ]; then
+        log "published owner sign-in link to secret ${secret}"
+    else
+        warn "owner link sync failed (status ${code:-none})"
+    fi
+}
+
 launch() {
     local port="${PI_POCKET_PORT:-8787}"
 
@@ -191,14 +237,33 @@ launch() {
 
     # pi-pocket-log-filter redacts the owner sign-in token and QR code from the launcher
     # log (errors pass through) and forwards signals to the launcher it runs.
-    exec /usr/local/bin/pi-pocket-log-filter \
+    # This shell stays PID 1: it publishes the owner link once the server has
+    # written config.json, then waits on the filter so signals and exit codes
+    # propagate and no unreaped children are left behind.
+    /usr/local/bin/pi-pocket-log-filter \
         --host 0.0.0.0 \
         --port "${port}" \
         --cwd "${REPOS_DIR}" \
-        --data "${DATA_DIR}"
+        --data "${DATA_DIR}" &
+    local child=$!
+    trap 'kill -TERM "${child}" 2>/dev/null' TERM INT HUP USR2
+    local waited=0
+    while [ "${waited}" -lt 90 ] && [ ! -r "${DATA_DIR}/config.json" ]; do
+        kill -0 "${child}" 2>/dev/null || break
+        sleep 1
+        waited=$((waited + 1))
+    done
+    sync_owner_url
+    wait "${child}"
+    local code=$?
+    trap - TERM INT HUP USR2
+    return "${code}"
 }
 
 prepare_directories
+if [ -n "${POCKET_FRAME_ANCESTORS:-}" ] && [ -x /usr/local/bin/pi-pocket-embed-patch ]; then
+    /usr/local/bin/pi-pocket-embed-patch || warn "continuing without embedded portal support"
+fi
 load_api_keys
 install_ssh_file authorized_keys 0600
 install_ssh_file known_hosts 0600

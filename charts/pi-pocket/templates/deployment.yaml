@@ -74,6 +74,14 @@ spec:
             - name: POD_UID
               valueFrom:
                 fieldRef: {fieldPath: metadata.uid}
+            - name: RUNTIME_SECRET
+              value: {{ include "pocket.runtimeSecret" . }}
+            - name: POCKET_PUBLIC_URL
+              value: {{ printf "https://%s" .Values.ingress.pocketHost | quote }}
+            {{- if .Values.portal.enabled }}
+            - name: POCKET_FRAME_ANCESTORS
+              value: {{ printf "https://%s" .Values.ingress.portalHost | quote }}
+            {{- end }}
           volumeMounts:
             - name: workspace
               mountPath: /workspace

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
+<meta name="color-scheme" content="dark">
 <title>pi-pocket portal</title>
 <link rel="stylesheet" href="/app.css">
 </head>
@@ -12,7 +13,11 @@
 
 <header class="page-header">
   <h1>pi-pocket portal</h1>
-  <p class="subtitle">Runtime configuration and lifecycle for the pi-pocket agent.</p>
+  <p class="subtitle">Agent workspace, runtime configuration, and lifecycle.</p>
+  <nav class="tabs" aria-label="Portal sections">
+    <button type="button" id="tab-workspace" aria-controls="panel-workspace" aria-selected="true">Workspace</button>
+    <button type="button" id="tab-configure" aria-controls="panel-configure" aria-selected="false">Configuration</button>
+  </nav>
 </header>
 
 <main id="main">
@@ -33,8 +38,36 @@
   </section>
 
   <div id="app" hidden>
-    <section class="card" aria-labelledby="status-title">
-      <h2 id="status-title">Agent status</h2>
+    <section id="panel-workspace" class="card" aria-labelledby="workspace-title" role="tabpanel" aria-hidden="false">
+      <h2 id="workspace-title">Agent workspace</h2>
+
+      <div id="owner-card" class="owner-card" hidden>
+        <div class="owner-text">
+          <h3>Owner sign-in</h3>
+          <p>This link signs a browser in as the owner. It is the owner's key: keep it private.</p>
+          <p class="owner-actions">
+            <button type="button" id="owner-open">Sign in embedded session</button>
+            <button type="button" id="owner-copy" class="secondary">Copy link</button>
+            <a id="owner-link" rel="noopener noreferrer" target="_blank">Open in new tab</a>
+          </p>
+        </div>
+        <div class="owner-qr">
+          <canvas id="owner-qr" width="196" height="196" role="img" aria-label="QR code for the owner sign-in link"></canvas>
+        </div>
+      </div>
+      <p id="owner-missing" class="hint" hidden>The owner sign-in link is not published yet. It appears here after the agent pod starts and syncs it to the runtime secret.</p>
+
+      <div class="button-row">
+        <button type="button" id="workspace-fullscreen">Full screen</button>
+        <button type="button" id="workspace-external" class="secondary">Open agent in new tab</button>
+        <button type="button" id="workspace-reload" class="secondary">Reload embedded view</button>
+      </div>
+      <div id="frame-wrap" class="frame-wrap">
+        <iframe id="agent-frame" title="pi-pocket agent" allow="fullscreen; clipboard-read; clipboard-write" loading="lazy" referrerpolicy="no-referrer"></iframe>
+      </div>
+      <p class="hint">The agent runs embedded here once this browser is signed in. Use the owner link above for the first sign-in, or sign in directly in the frame.</p>
+
+      <h3 class="status-head">Agent status</h3>
       <dl class="status-grid">
         <div><dt>State</dt><dd id="status-state">Unknown</dd></div>
         <div><dt>Replicas ready</dt><dd id="status-ready">&ndash;</dd></div>
@@ -48,57 +81,61 @@
       </div>
     </section>
 
-    <section class="card" aria-labelledby="apikeys-title">
-      <h2 id="apikeys-title">Runtime API keys</h2>
-      <p>Keys are stored in the <code>api-keys.json</code> entry of the agent's runtime secret. Existing values are never displayed here.</p>
-      <div class="table-scroll">
-        <table>
-          <caption class="sr-only">Runtime API keys</caption>
-          <thead>
-            <tr>
-              <th scope="col">Name</th>
-              <th scope="col">Status</th>
-              <th scope="col">New value</th>
-              <th scope="col">Remove</th>
-            </tr>
-          </thead>
-          <tbody id="api-key-rows"></tbody>
-        </table>
-      </div>
-    </section>
+    <section id="panel-configure" class="card" aria-labelledby="configure-title" role="tabpanel" aria-hidden="true" hidden>
+      <h2 id="configure-title">Configuration</h2>
 
-    <section class="card" aria-labelledby="ssh-title">
-      <h2 id="ssh-title">SSH access</h2>
-      <p>Only SSH <strong>public</strong> keys are accepted. Private keys are rejected.</p>
-      <div class="field">
-        <label for="authorized-keys">authorized_keys</label>
-        <textarea id="authorized-keys" rows="6" spellcheck="false" aria-describedby="authorized-keys-help"></textarea>
-        <p id="authorized-keys-help" class="hint">One OpenSSH public key per line; comments and blank lines are allowed.</p>
-      </div>
-      <div class="field">
-        <label for="known-hosts">known_hosts</label>
-        <textarea id="known-hosts" rows="6" spellcheck="false" aria-describedby="known-hosts-help"></textarea>
-        <p id="known-hosts-help" class="hint">Stored and passed to the agent as text; this portal never executes it.</p>
-      </div>
-    </section>
+      <section aria-labelledby="apikeys-title">
+        <h3 id="apikeys-title">Runtime API keys</h3>
+        <p>Keys are stored in the <code>api-keys.json</code> entry of the agent's runtime secret. Existing values are never displayed here.</p>
+        <div class="table-scroll">
+          <table>
+            <caption class="sr-only">Runtime API keys</caption>
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">Status</th>
+                <th scope="col">New value</th>
+                <th scope="col">Remove</th>
+              </tr>
+            </thead>
+            <tbody id="api-key-rows"></tbody>
+          </table>
+        </div>
+      </section>
 
-    <section class="card" aria-labelledby="save-title">
-      <h2 id="save-title">Save configuration</h2>
-      <p>Changes are saved against the version loaded above. If another operator saves first, this save fails and asks you to reload.</p>
-      <div class="button-row">
-        <button type="button" id="save-config">Save configuration</button>
-        <button type="button" id="reload-config" class="secondary">Reload configuration</button>
-      </div>
-      <p class="hint">After saving, choose <strong>Restart</strong> to apply the runtime secret at once; projected secret updates can take up to a minute to reach the pod.</p>
-    </section>
+      <section aria-labelledby="ssh-title">
+        <h3 id="ssh-title">SSH access</h3>
+        <p>Only SSH <strong>public</strong> keys are accepted. Private keys are rejected.</p>
+        <div class="field">
+          <label for="authorized-keys">authorized_keys</label>
+          <textarea id="authorized-keys" rows="6" spellcheck="false" aria-describedby="authorized-keys-help"></textarea>
+          <p id="authorized-keys-help" class="hint">One OpenSSH public key per line; comments and blank lines are allowed.</p>
+        </div>
+        <div class="field">
+          <label for="known-hosts">known_hosts</label>
+          <textarea id="known-hosts" rows="6" spellcheck="false" aria-describedby="known-hosts-help"></textarea>
+          <p id="known-hosts-help" class="hint">Stored and passed to the agent as text; this portal never executes it.</p>
+        </div>
+      </section>
 
-    <section class="card" aria-labelledby="help-title">
-      <h2 id="help-title">Help and access</h2>
-      <ul>
-        <li>Agent endpoint: <a id="pocket-link" rel="noopener noreferrer" target="_blank">not configured</a></li>
-        <li>Access to the pi-pocket agent is governed upstream by pi-pocket invitations and roles. This portal does not manage users, roles, or invitations.</li>
-        <li>The agent's service account has namespace admin permissions in this namespace (requested configuration). Anything running in the agent can read and modify resources here, including the runtime secret.</li>
-      </ul>
+      <section aria-labelledby="save-title">
+        <h3 id="save-title">Save configuration</h3>
+        <p>Changes are saved against the version loaded above. If another operator saves first, this save fails and asks you to reload.</p>
+        <div class="button-row">
+          <button type="button" id="save-config">Save configuration</button>
+          <button type="button" id="reload-config" class="secondary">Reload configuration</button>
+        </div>
+        <p class="hint">After saving, choose <strong>Restart</strong> to apply the runtime secret at once; projected secret updates can take up to a minute to reach the pod.</p>
+      </section>
+
+      <section aria-labelledby="help-title">
+        <h3 id="help-title">Help and access</h3>
+        <ul>
+          <li>Agent endpoint: <a id="pocket-link" rel="noopener noreferrer" target="_blank">not configured</a></li>
+          <li>Access to the pi-pocket agent is governed upstream by pi-pocket invitations and roles. This portal does not manage users, roles, or invitations.</li>
+          <li>The agent's service account has namespace admin permissions in this namespace (requested configuration). Anything running in the agent can read and modify resources here, including the runtime secret.</li>
+        </ul>
+      </section>
     </section>
   </div>
 </main>
@@ -107,6 +144,7 @@
   <p>pi-pocket portal</p>
 </footer>
 
+<script src="/qrcodegen.js"></script>
 <script src="/app.js" defer></script>
 </body>
 </html>

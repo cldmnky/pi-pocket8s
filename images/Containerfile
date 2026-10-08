@@ -218,8 +218,9 @@ RUN set -eux; \
     test -d node_modules/jiti
 
 COPY images/entrypoint.sh /usr/local/bin/pi-pocket-entrypoint
+COPY images/embed-patch.sh /usr/local/bin/pi-pocket-embed-patch
 COPY images/log-filter.mjs /usr/local/bin/pi-pocket-log-filter
-RUN chmod 0755 /usr/local/bin/pi-pocket-entrypoint /usr/local/bin/pi-pocket-log-filter
+RUN chmod 0755 /usr/local/bin/pi-pocket-entrypoint /usr/local/bin/pi-pocket-embed-patch /usr/local/bin/pi-pocket-log-filter
 
 ENV HOME=/workspace/home \
     XDG_CONFIG_HOME=/workspace/home/.config \

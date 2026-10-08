@@ -8,7 +8,14 @@ namespace:
 - start, stop, and restart of the pi-pocket Deployment
 
 The server embeds a dependency-free vanilla SPA (no CDN, no build step) and
-listens on port 8080.
+listens on port 8080. The SPA is styled after pi-pocket's own dark theme and
+embeds the agent itself in an iframe (with full-screen mode) on its Workspace
+tab. The owner sign-in link — synced into the runtime secret by the agent
+entrypoint as `owner-login-url` — is shown there with a QR code rendered
+locally by the vendored Nayuki generator (`web/qrcodegen.js`, MIT).
+Embedding requires the agent image's runtime patch (`images/embed-patch.sh`)
+for upstream's `frame-ancestors` CSP and `SameSite` session cookie; the
+portal's own CSP permits `frame-src` for the configured agent origin only.
 
 ## Security model
 
@@ -80,7 +87,7 @@ preserved on write.
 | --- | --- | --- | --- |
 | `GET` | `/healthz` | none | Liveness probe. |
 | `GET` | `/` | none | Embedded SPA. |
-| `GET` | `/api/config` | bearer | Redacted config: `resourceVersion`, `allowedApiKeys`, `apiKeys` (name → set), `authorizedKeys`, `knownHosts`, `pocketUrl`. |
+| `GET` | `/api/config` | bearer | Redacted config: `resourceVersion`, `allowedApiKeys`, `apiKeys` (name → set), `authorizedKeys`, `knownHosts`, `pocketUrl`, `ownerLoginUrl` (empty until the agent syncs it). |
 | `POST` | `/api/config` | bearer | Partial update, see below. |
 | `GET` | `/api/status` | bearer | Deployment replica status and last restart time. |
 | `POST` | `/api/deployment/start` | bearer | Scale the Deployment to 1 replica. |

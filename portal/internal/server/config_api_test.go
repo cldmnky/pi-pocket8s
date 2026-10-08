@@ -41,6 +41,22 @@ func TestGetConfigRedactsAPIKeyValues(t *testing.T) {
 	if view.PocketURL != "https://pi.example.com" {
 		t.Errorf("pocketUrl = %q", view.PocketURL)
 	}
+	if view.OwnerLoginURL != "" {
+		t.Errorf("ownerLoginUrl = %q, want empty before the agent syncs it", view.OwnerLoginURL)
+	}
+}
+
+func TestGetConfigExposesSyncedOwnerLogin(t *testing.T) {
+	env := newPortalTestEnv(t)
+	env.fake.setSecretValue("owner-login-url", "https://pi.example.com/login?token=owner-secret")
+	result := env.getConfig()
+	if result.Status != http.StatusOK {
+		t.Fatalf("GET /api/config status = %d, want 200 (body %s)", result.Status, result.Body)
+	}
+	view := decodeJSON[configViewResponse](t, result)
+	if view.OwnerLoginURL != "https://pi.example.com/login?token=owner-secret" {
+		t.Errorf("ownerLoginUrl = %q", view.OwnerLoginURL)
+	}
 }
 
 func contains(values []string, want string) bool {

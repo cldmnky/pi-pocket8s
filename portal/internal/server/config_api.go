@@ -16,10 +16,14 @@ const (
 	apiKeysSecretKey        = "api-keys.json"
 	authorizedKeysSecretKey = "authorized_keys"
 	knownHostsSecretKey     = "known_hosts"
+	ownerLoginSecretKey     = "owner-login-url"
 )
 
 // configView is the redacted runtime configuration shown to the browser.
-// API key values are never included; only names and set/unset status.
+// API key values are never included; only names and set/unset status. The
+// owner sign-in URL is shown because this portal already requires its own
+// administrative bearer token; it is synced into the secret by the agent
+// entrypoint at container start.
 type configView struct {
 	ResourceVersion string          `json:"resourceVersion"`
 	AllowedAPIKeys  []string        `json:"allowedApiKeys"`
@@ -27,6 +31,7 @@ type configView struct {
 	AuthorizedKeys  string          `json:"authorizedKeys"`
 	KnownHosts      string          `json:"knownHosts"`
 	PocketURL       string          `json:"pocketUrl"`
+	OwnerLoginURL   string          `json:"ownerLoginUrl"`
 }
 
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
@@ -149,6 +154,10 @@ func (s *Server) configView(secret *kube.Secret) (configView, error) {
 	if err != nil {
 		return configView{}, err
 	}
+	ownerLogin, _, err := secret.Bytes(ownerLoginSecretKey)
+	if err != nil {
+		return configView{}, err
+	}
 	return configView{
 		ResourceVersion: secret.Metadata.ResourceVersion,
 		AllowedAPIKeys:  append([]string(nil), allowedAPIKeyNames...),
@@ -156,6 +165,7 @@ func (s *Server) configView(secret *kube.Secret) (configView, error) {
 		AuthorizedKeys:  string(authorizedKeys),
 		KnownHosts:      string(knownHosts),
 		PocketURL:       s.cfg.PocketURL,
+		OwnerLoginURL:   string(ownerLogin),
 	}, nil
 }
 

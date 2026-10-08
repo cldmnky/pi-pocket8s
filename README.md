@@ -91,7 +91,7 @@ oc get secret pi-pocket-portal-token -n pi-pocket \
   -o jsonpath='{.data.token}' | base64 --decode; echo
 ```
 
-Enter it into the portal password field. Configure provider keys, SSH public keys and verified SSH `known_hosts`, then save and restart the workspace. The portal can start/stop/restart the one workspace; it cannot change generic Kubernetes resources or grant user roles.
+Enter it into the portal password field. The Workspace tab embeds the agent itself (with full-screen mode) in pi-pocket's own dark styling, and shows the owner sign-in link with a QR code once the agent pod has synced it. Configure provider keys, SSH public keys and verified SSH `known_hosts`, then save and restart the workspace. The portal can start/stop/restart the one workspace; it cannot change generic Kubernetes resources or grant user roles.
 
 **Access rights:** use pi-pocket's owner invitations, steer/view roles and session scopes in its People menu. Cluster rights are selected separately with `serviceAccount.namespaceRole` (`admin` by default, `edit`, `view`, or empty). The portal does not create another, incompatible upstream identity system.
 
