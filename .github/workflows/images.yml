@@ -153,23 +153,27 @@ jobs:
           docker exec smoke sh -c 'getcap /usr/bin/newuidmap | grep -q cap_setuid && getcap /usr/bin/newgidmap | grep -q cap_setgid'
 
           # The owner sign-in token and its QR code must not reach the container log;
-          # the token itself stays in config.json (never printed by this job).
+          # the token itself stays in config.json (never printed by this job). The
+          # log is captured once: piping into `grep -q` can kill `docker logs` with
+          # SIGPIPE (141) under pipefail, and with an early match would also make
+          # the leak check below a silent no-op.
+          logs="$(docker logs smoke 2>&1)"
           token="$(docker exec smoke node -e 'const { ownerToken } = require("/workspace/home/.pi-pocket/config.json"); process.stdout.write(ownerToken)')"
           if [ -z "${token}" ]; then
             echo "::error::could not read the owner token from config.json"
             exit 1
           fi
-          if docker logs smoke 2>&1 | grep -qF "${token}"; then
+          if grep -qF "${token}" <<<"${logs}"; then
             echo "::error::the owner token leaked into the container log"
             exit 1
           fi
-          docker logs smoke 2>&1 | grep -q '\[redacted\]' || { echo "::error::the sign-in link was not redacted in the log"; exit 1; }
-          docker logs smoke 2>&1 | grep -q 'QR code hidden' || { echo "::error::the sign-in QR code was not hidden in the log"; exit 1; }
+          grep -q '\[redacted\]' <<<"${logs}" || { echo "::error::the sign-in link was not redacted in the log"; exit 1; }
+          grep -q 'QR code hidden' <<<"${logs}" || { echo "::error::the sign-in QR code was not hidden in the log"; exit 1; }
 
           # The portal-iframe embed patches applied to the pinned upstream sources.
           docker exec smoke sh -c 'grep -qx "        .frame-ancestors .self. https://portal.example.com.," /opt/pi-pocket/src/server/http/assets.ts'
           docker exec smoke sh -c '[ "$(grep -c SameSite=None /opt/pi-pocket/src/server/auth.ts)" = 2 ]'
-          docker logs smoke 2>&1 | grep -q 'embedded mode enabled for https://portal.example.com'
+          grep -q 'embedded mode enabled for https://portal.example.com' <<<"${logs}" || { echo "::error::the embed patch did not apply"; exit 1; }
 
           # Node 24 with its built-in SQLite, plus the upstream runtime dependencies.
           docker exec smoke node -e 'const { DatabaseSync } = require("node:sqlite"); new DatabaseSync(":memory:").exec("select 1"); console.log("node:sqlite ok")'
