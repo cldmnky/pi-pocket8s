@@ -215,7 +215,8 @@ RUN set -eux; \
     rm -rf /root/.npm; \
     node --disable-warning=ExperimentalWarning --check bin/pi-pocket.js; \
     test -x node_modules/.bin/pi; \
-    test -d node_modules/jiti
+    test -d node_modules/jiti; \
+    chown -R 1000:1000 /opt/pi-pocket
 
 COPY images/entrypoint.sh /usr/local/bin/pi-pocket-entrypoint
 COPY images/embed-patch.sh /usr/local/bin/pi-pocket-embed-patch

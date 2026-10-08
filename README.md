@@ -10,7 +10,7 @@ A persistent [pi-pocket](https://github.com/TannerMidd/pi-pocket) coding workspa
 - `/workspace/repos`: repositories. `/workspace/home`: persistent home, pi-pocket SQLite/settings, Pi provider logins, caches and SSH configuration.
 - Portal configuration is stored in a named Kubernetes Secret and mounted into the pocket pod. Provider keys are loaded on startup; save configuration, then restart. No credentials belong in Git or Helm values.
 
-The cluster profile in `deploy/openshift-values.yaml` targets OpenShift **4.22.8**, Kubernetes **1.35.6**, ingress domain `apps.voyager.blahonga.me`, and **LVMS** `lvms-vg1` storage. Use your own values for another cluster.
+The cluster profile in `deploy/openshift-values.yaml` is an example: set your own OpenShift version-appropriate values, ingress domain and hosts, and an idmap-capable storage class. Never use NFS-backed storage for these user-namespace pods.
 
 ## Security: read before granting access
 
@@ -77,8 +77,8 @@ The installer needs permission to bind the requested namespace role and built-in
 
 URLs for the included cluster profile:
 
-- Pi-pocket: **https://pocket.apps.voyager.blahonga.me**
-- Portal: **https://pocket-portal.apps.voyager.blahonga.me**
+- Pi-pocket: **https://`ingress.pocketHost`** (e.g. `https://pocket.apps.example.com`)
+- Portal: **https://`ingress.portalHost`** (e.g. `https://pocket-portal.apps.example.com`)
 
 The router's default certificate is used when no ingress TLS Secret is specified. Other ingress controllers need an appropriate class, certificate Secrets and ingress namespace selector in the NetworkPolicy. Do not use `curl -k` or bypass certificate validation in normal operation.
 
@@ -101,7 +101,7 @@ The owner key is persisted in pi-pocket's private config, independently of the p
 
 ```bash
 oc exec -n pi-pocket deploy/pi-pocket -- node --input-type=module -e \
-  'import{readFileSync}from"node:fs";const c=JSON.parse(readFileSync(process.env.PI_POCKET_DIR+"/config.json","utf8"));console.log("https://pocket.apps.voyager.blahonga.me/login?token="+encodeURIComponent(c.ownerToken))'
+  'import{readFileSync}from"node:fs";const c=JSON.parse(readFileSync(process.env.PI_POCKET_DIR+"/config.json","utf8"));console.log(process.env.POCKET_PUBLIC_URL+"/login?token="+encodeURIComponent(c.ownerToken))'
 ```
 
 Treat that output like a password. Sign in once, then invite trusted collaborators through upstream pi-pocket. Do not scrape logs into a public dashboard: upstream may log sensitive session information. Provider API keys can be configured in the portal; upstream Pi provider OAuth logins can also be configured interactively and persist in the home directory.
