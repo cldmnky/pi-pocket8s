@@ -17,6 +17,7 @@ spec:
       ports:
         - {protocol: TCP, port: 8787}
         - {protocol: TCP, port: 8080}
+        - {protocol: TCP, port: 8081}
 # Egress intentionally allowed: code tools need Git, package registries, LLMs and K8s.
 {{- if and .Values.portal.enabled (ne (include "pocket.portalNamespace" .) .Release.Namespace) }}
 ---

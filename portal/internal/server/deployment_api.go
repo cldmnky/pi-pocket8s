@@ -27,6 +27,7 @@ type statusView struct {
 	Running           bool   `json:"running"`
 	RestartedAt       string `json:"restartedAt,omitempty"`
 	PocketURL         string `json:"pocketUrl"`
+	TerminalURL       string `json:"terminalUrl"`
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -121,5 +122,6 @@ func (s *Server) statusView(deployment *kube.Deployment) statusView {
 		Running:           desired > 0,
 		RestartedAt:       deployment.Spec.Template.Metadata.Annotations[restartAnnotation],
 		PocketURL:         s.cfg.PocketURL,
+		TerminalURL:       s.cfg.TerminalURL,
 	}
 }

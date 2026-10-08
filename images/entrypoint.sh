@@ -262,13 +262,21 @@ launch() {
     # written config.json, then waits on the filter so signals and exit codes
     # propagate and no unreaped children are left behind.
     clear_stale_lock
+    # Web terminal daemon (pi-terminal): same container, same user and
+    # workspace as pi-pocket. It restarts on its own if it crashes; the
+    # launcher below owns the container's exit code.
+    TERMINAL_PORT="${TERMINAL_PORT:-8081}"
+    export TERMINAL_PORT
+    /usr/local/bin/pi-terminal &
+    local terminal=$!
+    log "terminal daemon started (pid ${terminal}, port ${TERMINAL_PORT})"
     /usr/local/bin/pi-pocket-log-filter \
         --host 0.0.0.0 \
         --port "${port}" \
         --cwd "${REPOS_DIR}" \
         --data "${DATA_DIR}" &
     local child=$!
-    trap 'kill -TERM "${child}" 2>/dev/null' TERM INT HUP USR2
+    trap 'kill -TERM "${child}" "${terminal}" 2>/dev/null' TERM INT HUP USR2
     local waited=0
     while [ "${waited}" -lt 90 ] && [ ! -r "${DATA_DIR}/config.json" ]; do
         kill -0 "${child}" 2>/dev/null || break
@@ -276,10 +284,23 @@ launch() {
         waited=$((waited + 1))
     done
     sync_owner_url
-    wait "${child}"
-    local code=$?
-    trap - TERM INT HUP USR2
-    return "${code}"
+    # Supervise both processes: the launcher owns the exit code, while a
+    # crashed terminal daemon is restarted (it holds no state worth keeping).
+    while true; do
+        wait -n "${child}" "${terminal}"
+        if ! kill -0 "${child}" 2>/dev/null; then
+            wait "${child}"
+            local code=$?
+            kill -TERM "${terminal}" 2>/dev/null
+            wait 2>/dev/null
+            trap - TERM INT HUP USR2
+            return "${code}"
+        fi
+        log "terminal daemon exited; restarting in 5s"
+        sleep 5
+        /usr/local/bin/pi-terminal &
+        terminal=$!
+    done
 }
 
 prepare_directories

@@ -26,4 +26,4 @@ jobs:
           version: v3.19.0
       - run: pip install -r requirements-dev.txt
       - run: make lint test
-      - run: test -z "$(gofmt -l $(find portal -name '*.go'))"
+      - run: test -z "$(gofmt -l $(find portal terminal -name '*.go'))"

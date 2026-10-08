@@ -139,6 +139,29 @@ oc exec -n pi-pocket deploy/pi-pocket -- node --input-type=module -e \
 
 Treat that output like a password. Sign in once, then invite trusted collaborators through upstream pi-pocket. Do not scrape logs into a public dashboard: upstream may log sensitive session information. Provider API keys can be configured in the portal; upstream Pi provider OAuth logins can also be configured interactively and persist in the home directory.
 
+### Web terminal
+
+The workspace tab's **Open terminal in new tab** button opens a real shell in
+the agent pod, rendered with [ghostty-web](https://github.com/coder/ghostty-web)
+(`ghostty-web@0.4.0`, MIT, vendored under `terminal/web/static`). It is served
+by a small Go daemon (`terminal/`, built into the image as
+`/usr/local/bin/pi-terminal`) that bridges one WebSocket connection to one PTY
+shell running as the pocket user in `/workspace/repos`, with the same
+environment the agent itself gets (provider keys, `gh`, `kubectl`, namespace
+kubeconfig).
+
+This is deliberately not a pi-pocket extension: extensions can add tools,
+prompt sections, hooks, and tasks, but offer no web-UI or HTTP-route surface,
+and a terminal needs both plus a PTY backend. See `terminal/README.md` for the
+protocol, authentication (`?token=` owner check against `config.json`, then an
+in-memory `__Host-` session cookie), and environment contract.
+
+The terminal has its own `Ingress` (`ingress.terminalHost`, edge TLS like the
+rest) and `Service` (`pi-pocket-terminal:8081`); the pod's NetworkPolicy
+already allows the router to reach it. A human typing in the terminal bypasses
+Lancet Guard exactly like the owner's own `!`-commands — only the owner token
+opens it, and keystrokes are never logged.
+
 ### Provider OAuth (browser) logins
 
 Interactive provider logins (e.g. OpenAI with a browser) start a `localhost`

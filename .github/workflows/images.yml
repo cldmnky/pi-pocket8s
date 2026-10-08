@@ -116,8 +116,9 @@ jobs:
         run: |
           set -euo pipefail
           docker volume rm -f smoke-home smoke-repos >/dev/null 2>&1 || true
-          docker run --detach --name smoke --publish 127.0.0.1:8787:8787 \
+          docker run --detach --name smoke --publish 127.0.0.1:8787:8787 --publish 127.0.0.1:8081:8081 \
             --env POCKET_FRAME_ANCESTORS=https://portal.example.com \
+            --env TERMINAL_FRAME_ANCESTORS=https://portal.example.com \
             --volume smoke-home:/workspace/home \
             --volume smoke-repos:/workspace/repos \
             local/pi-pocket:pr
@@ -174,6 +175,24 @@ jobs:
           docker exec smoke sh -c 'grep -qx "        .frame-ancestors .self. https://portal.example.com.," /opt/pi-pocket/src/server/http/assets.ts'
           docker exec smoke sh -c '[ "$(grep -c SameSite=None /opt/pi-pocket/src/server/auth.ts)" = 2 ]'
           grep -q 'embedded mode enabled for https://portal.example.com' <<<"${logs}" || { echo "::error::the embed patch did not apply"; exit 1; }
+
+          # Web terminal daemon: health check, auth gate, framing/CSP headers,
+          # then a real PTY round-trip over WebSocket with the owner token.
+          thealth="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/healthz || true)"
+          if [ "${thealth}" != "200" ]; then
+            echo "::error::terminal daemon did not answer on :8081 (status: ${thealth:-none})"
+            exit 1
+          fi
+          if [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/ || true)" != "401" ]; then
+            echo "::error::terminal page is not gated on the owner token"
+            exit 1
+          fi
+          theaders="$(curl -sI http://127.0.0.1:8081/ || true)"
+          grep -qi "frame-ancestors 'self' https://portal.example.com" <<<"${theaders}" || { echo "::error::terminal framing header missing"; exit 1; }
+          grep -qi "wasm-unsafe-eval" <<<"${theaders}" || { echo "::error::terminal CSP cannot load the WASM parser"; exit 1; }
+          # The prober lives in the repo so it is syntax-checked by CI too.
+          cp "$GITHUB_WORKSPACE/images/term-smoke.mjs" /tmp/term-smoke.mjs
+          SMOKE_TOKEN="${token}" node /tmp/term-smoke.mjs
 
           # Node 24 with its built-in SQLite, plus the upstream runtime dependencies.
           docker exec smoke node -e 'const { DatabaseSync } = require("node:sqlite"); new DatabaseSync(":memory:").exec("select 1"); console.log("node:sqlite ok")'

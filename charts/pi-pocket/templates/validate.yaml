@@ -26,6 +26,9 @@
 {{- if and .Values.portal.enabled .Values.ingress.enabled (empty .Values.ingress.portalHost) -}}
 {{- fail "ingress.portalHost is required when portal is enabled" -}}
 {{- end -}}
+{{- if and .Values.ingress.enabled (empty .Values.ingress.terminalHost) -}}
+{{- fail "ingress.terminalHost is required" -}}
+{{- end -}}
 {{- if and .Values.portal.enabled (not .Values.ingress.enabled) -}}
 {{- fail "the portal requires an HTTPS ingress and explicit origin" -}}
 {{- end -}}

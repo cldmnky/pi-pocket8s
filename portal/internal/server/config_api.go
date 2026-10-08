@@ -31,6 +31,7 @@ type configView struct {
 	AuthorizedKeys  string          `json:"authorizedKeys"`
 	KnownHosts      string          `json:"knownHosts"`
 	PocketURL       string          `json:"pocketUrl"`
+	TerminalURL     string          `json:"terminalUrl"`
 	OwnerLoginURL   string          `json:"ownerLoginUrl"`
 }
 
@@ -165,6 +166,7 @@ func (s *Server) configView(secret *kube.Secret) (configView, error) {
 		AuthorizedKeys:  string(authorizedKeys),
 		KnownHosts:      string(knownHosts),
 		PocketURL:       s.cfg.PocketURL,
+		TerminalURL:     s.cfg.TerminalURL,
 		OwnerLoginURL:   string(ownerLogin),
 	}, nil
 }

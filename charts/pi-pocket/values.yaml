@@ -60,9 +60,11 @@ ingress:
   className: openshift-default
   pocketHost: ""
   portalHost: ""
+  terminalHost: ""
   # On OpenShift, omission uses the router's default certificate.
   pocketTLSSecret: ""
   portalTLSSecret: ""
+  terminalTLSSecret: ""
   annotations:
     route.openshift.io/termination: edge
     route.openshift.io/insecureEdgeTerminationPolicy: Redirect

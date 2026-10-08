@@ -56,4 +56,31 @@ spec:
                 name: {{ include "pocket.fullname" . }}-portal
                 port: {name: http}
 {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "pocket.fullname" . }}-terminal
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  # Same empty-tls rule as above: no stanza without an explicit Secret.
+  {{- if .Values.ingress.terminalTLSSecret }}
+  tls:
+    - hosts: [{{ .Values.ingress.terminalHost | quote }}]
+      secretName: {{ .Values.ingress.terminalTLSSecret }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.terminalHost | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "pocket.fullname" . }}-terminal
+                port: {name: terminal}
 {{- end }}

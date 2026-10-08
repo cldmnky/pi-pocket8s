@@ -8,13 +8,15 @@ RELEASE ?= pi-pocket
 lint:
 	helm lint charts/pi-pocket -f $(VALUES)
 	cd portal && go vet ./...
+	cd terminal && go vet ./...
 
 format:
-	gofmt -w $$(find portal -name '*.go')
+	gofmt -w $$(find portal terminal -name '*.go')
 
 test:
 	$(PYTHON) tests/test_chart.py
 	cd portal && go test -race ./...
+	cd terminal && go test -race ./...
 	@if ls images/*.test.mjs >/dev/null 2>&1; then node --test images/*.test.mjs; fi
 
 dry-run:

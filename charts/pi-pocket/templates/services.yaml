@@ -12,6 +12,21 @@ spec:
     - name: http
       port: 8787
       targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "pocket.fullname" . }}-terminal
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: pocket
+  ports:
+    - name: terminal
+      port: 8081
+      targetPort: terminal
 {{- if .Values.portal.enabled }}
 ---
 apiVersion: v1

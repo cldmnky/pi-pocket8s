@@ -90,6 +90,8 @@ spec:
               value: {{ printf "https://%s" .Values.ingress.portalHost | quote }}
             - name: POCKET_URL
               value: {{ printf "https://%s" .Values.ingress.pocketHost | quote }}
+            - name: TERMINAL_URL
+              value: {{ printf "https://%s" .Values.ingress.terminalHost | quote }}
           volumeMounts:
             {{- if include "pocket.githubEnabled" . }}
             - name: github-app

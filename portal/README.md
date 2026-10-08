@@ -87,6 +87,7 @@ portal's own CSP permits `frame-src` for the configured agent origin only.
 | `POCKET_DEPLOYMENT` | yes | Name of the pi-pocket Deployment to start/stop/restart. |
 | `CONFIG_SECRET` | yes | Name of the existing runtime Secret the chart created. |
 | `POCKET_URL` | yes | Public `https` URL of the agent, shown as a link in the SPA. |
+| `TERMINAL_URL` | no | Public `https` URL of the web terminal; enables the portal's "Open terminal" button. Empty hides it. |
 | `PORTAL_ORIGIN` | yes | `https` origin of the portal; mutations must match it. |
 | `PORTAL_TOKEN_FILE` | no | Token file path, default `/run/portal/token` (ignored in GitHub mode). |
 | `POCKET_NAMESPACE` | no | Workspace namespace when the portal runs in a separate management namespace (required in GitHub mode). |

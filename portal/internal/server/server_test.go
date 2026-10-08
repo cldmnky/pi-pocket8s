@@ -137,6 +137,7 @@ func newPortalTestEnv(t *testing.T) *portalTestEnv {
 		Deployment:   testDeploymentName,
 		ConfigSecret: testSecretName,
 		PocketURL:    "https://pi.example.com",
+		TerminalURL:  "https://terminal.example.com",
 		PortalOrigin: testOrigin,
 		TokenFile:    tokenPath,
 	}
@@ -223,6 +224,7 @@ type configViewResponse struct {
 	AuthorizedKeys  string          `json:"authorizedKeys"`
 	KnownHosts      string          `json:"knownHosts"`
 	PocketURL       string          `json:"pocketUrl"`
+	TerminalURL     string          `json:"terminalUrl"`
 	OwnerLoginURL   string          `json:"ownerLoginUrl"`
 }
 
@@ -236,6 +238,7 @@ type statusResponse struct {
 	Running           bool   `json:"running"`
 	RestartedAt       string `json:"restartedAt"`
 	PocketURL         string `json:"pocketUrl"`
+	TerminalURL       string `json:"terminalUrl"`
 }
 
 func TestHealthzIsUnauthenticated(t *testing.T) {

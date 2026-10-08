@@ -41,6 +41,9 @@ func TestGetConfigRedactsAPIKeyValues(t *testing.T) {
 	if view.PocketURL != "https://pi.example.com" {
 		t.Errorf("pocketUrl = %q", view.PocketURL)
 	}
+	if view.TerminalURL != "https://terminal.example.com" {
+		t.Errorf("terminalUrl = %q", view.TerminalURL)
+	}
 	if view.OwnerLoginURL != "" {
 		t.Errorf("ownerLoginUrl = %q, want empty before the agent syncs it", view.OwnerLoginURL)
 	}

@@ -26,6 +26,7 @@ type Config struct {
 	Deployment              string
 	ConfigSecret            string
 	PocketURL               string
+	TerminalURL             string
 	PortalOrigin            string
 	TokenFile               string
 	AuthMode                string
@@ -42,6 +43,7 @@ func FromEnv() (Config, error) {
 		Deployment:   strings.TrimSpace(os.Getenv("POCKET_DEPLOYMENT")),
 		ConfigSecret: strings.TrimSpace(os.Getenv("CONFIG_SECRET")),
 		PocketURL:    strings.TrimSpace(os.Getenv("POCKET_URL")),
+		TerminalURL:  strings.TrimSpace(os.Getenv("TERMINAL_URL")),
 		PortalOrigin: strings.TrimSpace(os.Getenv("PORTAL_ORIGIN")),
 		TokenFile:    strings.TrimSpace(os.Getenv("PORTAL_TOKEN_FILE")),
 	}
@@ -118,6 +120,12 @@ func (c *Config) Validate() error {
 	}
 	if _, err := parseHTTPSURL(c.PocketURL, "POCKET_URL", true); err != nil {
 		return err
+	}
+	// The terminal is optional: older installs run a portal without it.
+	if c.TerminalURL != "" {
+		if _, err := parseHTTPSURL(c.TerminalURL, "TERMINAL_URL", true); err != nil {
+			return err
+		}
 	}
 	// Store the canonical origin so later comparisons are exact.
 	origin, err := parseHTTPSURL(c.PortalOrigin, "PORTAL_ORIGIN", false)

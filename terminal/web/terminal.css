@@ -1,0 +1,118 @@
+/* pi-pocket terminal theme: Tokyo Night tokens shared with the portal. */
+:root {
+  color-scheme: dark;
+  --o-bg: #1a1b26;
+  --o-bg-dark: #13141c;
+  --o-fg: #a9b1d6;
+  --o-fg-bright: #c0caf5;
+  --o-fg-dim: #565f89;
+  --o-accent: #7aa2f7;
+  --o-red: #f7768e;
+  --o-green: #9ece6a;
+  --line: #3b4261;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--o-bg-dark);
+  color: var(--o-fg);
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9rem;
+}
+
+.term-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.4rem 0.75rem;
+  background: var(--o-bg);
+  border-bottom: 2px solid var(--line);
+}
+
+.term-header h1 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--o-fg-bright);
+  white-space: nowrap;
+}
+
+.term-status {
+  margin: 0;
+  flex: 1 1 auto;
+  color: var(--o-fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.term-status.ok {
+  color: var(--o-green);
+}
+
+.term-status.bad {
+  color: var(--o-red);
+}
+
+.term-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+button {
+  font: inherit;
+  padding: 0.35rem 0.8rem;
+  border-radius: 0;
+  border: 2px solid var(--o-accent);
+  background: transparent;
+  color: var(--o-accent);
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--o-accent);
+  color: var(--o-bg);
+}
+
+.term-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: #000000;
+}
+
+.term-container {
+  position: absolute;
+  inset: 0;
+  padding: 0.5rem;
+}
+
+.term-container canvas {
+  display: block;
+}
+
+.term-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  background: rgba(19, 20, 28, 0.92);
+  color: var(--o-fg-bright);
+}
+
+.term-overlay[hidden] {
+  display: none;
+}
