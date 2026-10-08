@@ -100,11 +100,13 @@ jobs:
           platforms: ${{ matrix.platform }}
           pull: true
           provenance: false
-          # Push events export one architecture per job by digest; the merge job joins
-          # them. Pull requests build locally and only the amd64 pi-pocket image is
-          # loaded for the smoke test.
-          outputs: ${{ github.event_name != 'pull_request' && format('type=image,name={0}/{1}/{2},push-by-digest=true,push=true', env.QUAY_REGISTRY, env.QUAY_NAMESPACE, matrix.image) || '' }}
-          tags: ${{ github.event_name == 'pull_request' && format('local/{0}:pr', matrix.image) || '' }}
+          # Push events push one architecture per job under a per-arch tag; the
+          # merge job joins the two tags into one manifest list. (By-digest
+          # pushes are not used: Quay does not resolve a just-pushed untagged
+          # digest reliably.) Pull requests build locally and only the amd64
+          # pi-pocket image is loaded for the smoke test.
+          outputs: ${{ github.event_name != 'pull_request' && format('type=image,name={0}/{1}/{2},push=true', env.QUAY_REGISTRY, env.QUAY_NAMESPACE, matrix.image) || '' }}
+          tags: ${{ github.event_name == 'pull_request' && format('local/{0}:pr', matrix.image) || format('{0}/{1}/{2}:sha-{3}-{4}', env.QUAY_REGISTRY, env.QUAY_NAMESPACE, matrix.image, github.sha, matrix.arch) }}
           load: ${{ github.event_name == 'pull_request' && matrix.image == 'pi-pocket' && matrix.platform == 'linux/amd64' }}
           cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.arch }}
@@ -178,21 +180,6 @@ jobs:
           docker rm -f smoke >/dev/null 2>&1 || true
           docker volume rm -f smoke-home smoke-repos >/dev/null 2>&1 || true
 
-      - name: Record the pushed digest
-        if: github.event_name != 'pull_request'
-        run: |
-          mkdir -p digests
-          echo "${{ steps.build.outputs.digest }}" > "digests/${{ matrix.arch }}.txt"
-
-      - name: Upload the pushed digest
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v7
-        with:
-          name: digest-${{ matrix.image }}-${{ matrix.arch }}
-          path: digests/${{ matrix.arch }}.txt
-          retention-days: 1
-          if-no-files-found: error
-
   merge:
     name: merge ${{ matrix.image }}
     if: github.event_name != 'pull_request'
@@ -200,6 +187,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
+      fail-fast: false
       matrix:
         image:
           - pi-pocket
@@ -215,31 +203,12 @@ jobs:
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_TOKEN }}
 
-      - name: Download the pushed digests
-        uses: actions/download-artifact@v8
-        with:
-          pattern: digest-${{ matrix.image }}-*
-          path: digests
-          merge-multiple: true
-
       - name: Create the multi-arch manifest
         env:
           IMAGE: ${{ env.QUAY_REGISTRY }}/${{ env.QUAY_NAMESPACE }}/${{ matrix.image }}
         run: |
           set -euo pipefail
-          refs=()
-          for file in digests/*.txt; do
-            digest="$(cat "${file}")"
-            if [ -z "${digest}" ]; then
-              echo "::error::empty digest in ${file}"
-              exit 1
-            fi
-            refs+=("${IMAGE}@${digest}")
-          done
-          if [ "${#refs[@]}" -ne 2 ]; then
-            echo "::error::expected amd64 and arm64 digests, found ${#refs[@]}"
-            exit 1
-          fi
+          refs=("${IMAGE}:sha-${GITHUB_SHA}-amd64" "${IMAGE}:sha-${GITHUB_SHA}-arm64")
 
           tags=("--tag" "${IMAGE}:sha-${GITHUB_SHA}")
           if [ "${GITHUB_REF}" = "refs/heads/main" ]; then

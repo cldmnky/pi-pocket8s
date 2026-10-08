@@ -190,10 +190,10 @@ normally.
   tested (server answers on `:8787`, workspace prepared, `node:sqlite`/`jiti` load,
   `rg`/`kubectl`/`helm`/`oc` run, the owner token never appears in the log, and `vfs`
   storage plus the nested-container helpers are in place).
-- **main, tags, manual, scheduled**: each architecture is pushed by digest to
-  `quay.io/cldmnky/<image>`, then merged into one manifest list tagged `sha-<commit>`
-  (immutable); `latest` is added on `main` only. Scheduled runs pick up a newer UBI 10
-  base and RHEL packages.
+- **main, tags, manual, scheduled**: each architecture is pushed to
+  `quay.io/cldmnky/<image>` under `sha-<commit>-<arch>`, then merged into one
+  manifest list tagged `sha-<commit>` (immutable); `latest` is added on `main`
+  only. Scheduled runs pick up a newer UBI 10 base and RHEL packages.
 - Registry credentials: repository secrets `QUAY_USERNAME` and `QUAY_TOKEN`.
 
 ## Local smoke test
