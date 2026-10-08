@@ -16,6 +16,7 @@ import (
 
 	"github.com/cldmnky/pi-pocket8s/portal/internal/auth"
 	"github.com/cldmnky/pi-pocket8s/portal/internal/config"
+	"github.com/cldmnky/pi-pocket8s/portal/internal/githubapp"
 	"github.com/cldmnky/pi-pocket8s/portal/internal/kube"
 	"github.com/cldmnky/pi-pocket8s/portal/internal/server"
 )
@@ -39,8 +40,10 @@ func run(logger *slog.Logger) error {
 
 	// Fail closed before serving anything: without a strong token every API
 	// request would have to be denied anyway.
-	if _, err := auth.LoadToken(cfg.TokenFile); err != nil {
-		return fmt.Errorf("portal token: %w", err)
+	if cfg.AuthMode != "github" {
+		if _, err := auth.LoadToken(cfg.TokenFile); err != nil {
+			return fmt.Errorf("portal token: %w", err)
+		}
 	}
 
 	kubeClient, err := kube.InClusterClient(10 * time.Second)
@@ -53,9 +56,17 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("embedded SPA: %w", err)
 	}
 
+	portal := server.New(cfg, kubeClient, logger, static)
+	if cfg.AuthMode == "github" {
+		client, err := githubapp.New(cfg.GitHub)
+		if err != nil {
+			return err
+		}
+		portal.EnableGitHub(client)
+	}
 	srv := &http.Server{
 		Addr:              config.DefaultListenAddr,
-		Handler:           server.New(cfg, kubeClient, logger, static).Handler(),
+		Handler:           portal.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,

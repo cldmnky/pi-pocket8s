@@ -16,6 +16,12 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{- end -}}
+{{- define "pocket.githubEnabled" -}}
+{{- if or (eq .Values.portal.authMode "github") (and (eq .Values.portal.authMode "auto") (not (empty .Values.portal.github.clientID))) -}}true{{- end -}}
+{{- end -}}
+{{- define "pocket.portalNamespace" -}}
+{{- default .Release.Namespace .Values.portal.namespace -}}
+{{- end -}}
 {{- define "pocket.runtimeSecret" -}}
 {{- default (printf "%s-runtime" (include "pocket.fullname" .)) .Values.runtimeSecret.existingSecret -}}
 {{- end -}}

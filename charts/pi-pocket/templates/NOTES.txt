@@ -1,7 +1,10 @@
 Pi-pocket workspace: https://{{ .Values.ingress.pocketHost }}
 {{ if .Values.portal.enabled }}Configuration portal: https://{{ .Values.ingress.portalHost }}
-Retrieve its administrative token from a trusted terminal:
-  oc get secret {{ include "pocket.tokenSecret" . }} -n {{ .Release.Namespace }} -o jsonpath='{.data.token}' | base64 --decode
+{{ if include "pocket.githubEnabled" . }}Sign in with GitHub. Only active {{ .Values.portal.github.organization }}{{ if .Values.portal.github.team }}/{{ .Values.portal.github.team }}{{ end }} members are admitted.
+App credentials stay in {{ include "pocket.portalNamespace" . }}; workspace operations use short-lived bot tokens.
+{{ else }}Retrieve its administrative token from a trusted terminal:
+  oc get secret {{ include "pocket.tokenSecret" . }} -n {{ include "pocket.portalNamespace" . }} -o jsonpath='{.data.token}' | base64 --decode
+{{ end }}
 {{ end }}
 WARNING: pi-pocket steering means shell access and the configured namespace
 {{ default "(no bound role)" .Values.serviceAccount.namespaceRole }} Kubernetes rights. Use a dedicated namespace and trusted collaborators.

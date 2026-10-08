@@ -98,6 +98,40 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(ingresses[0]["spec"]["tls"][0]["secretName"], "pocket-tls")
         self.assertEqual(ingresses[1]["spec"]["tls"][0]["secretName"], "portal-tls")
 
+    def test_github_auto_mode_and_namespace_boundary(self):
+        options = ["--set", "portal.namespace=management", "--set", "portal.github.clientID=client",
+                   "--set", "portal.github.appID=123", "--set", "portal.github.installationID=456",
+                   "--set", "portal.github.organization=example", "--set", "portal.github.repositories[0]=example/repo",
+                   "--set", "portal.github.existingSecret=github-app"]
+        docs = render(*options)
+        portal = find(docs, "Deployment", "pi-pocket-portal")
+        self.assertEqual(portal["metadata"]["namespace"], "management")
+        self.assertEqual(portal["spec"]["strategy"]["type"], "Recreate")
+        pod = portal["spec"]["template"]["spec"]
+        env = {item["name"]: item.get("value") for item in pod["containers"][0]["env"]}
+        self.assertEqual(env["PORTAL_AUTH_MODE"], "auto")
+        self.assertEqual(env["GITHUB_CLIENT_ID"], "client")
+        self.assertEqual(env["POCKET_NAMESPACE"], "test-pocket")
+        self.assertEqual(env["POCKET_SERVICE_ACCOUNT"], "pi-pocket")
+        self.assertEqual(pod["volumes"][0]["secret"]["secretName"], "github-app")
+        self.assertFalse(any(item["kind"] == "Secret" and "portal-token" in item["metadata"]["name"] for item in docs))
+        for kind in ("ServiceAccount", "Service", "Ingress"):
+            self.assertEqual(find(docs, kind, "pi-pocket-portal")["metadata"]["namespace"], "management")
+        role = find(docs, "RoleBinding", "pi-pocket-portal")
+        self.assertEqual(role["subjects"][0]["namespace"], "management")
+        self.assertEqual(find(docs, "ClusterRole", "test-pocket-pi-pocket-github-tokenreview")["rules"],
+                         [{"apiGroups": ["authentication.k8s.io"], "resources": ["tokenreviews"], "verbs": ["create"]}])
+        agent = find(docs, "Deployment", "pi-pocket")["spec"]["template"]["spec"]
+        self.assertTrue(all(v.get("secret", {}).get("secretName") != "github-app" for v in agent["volumes"]))
+        audience = next(v for v in agent["volumes"] if v["name"] == "github-broker")["projected"]["sources"][0]["serviceAccountToken"]["audience"]
+        self.assertEqual(audience, "pi-pocket-github")
+        with self.assertRaises(subprocess.CalledProcessError):
+            render(*options, "--set", "portal.namespace=test-pocket")
+        with self.assertRaises(subprocess.CalledProcessError):
+            render(*options, "--set", "portal.github.existingSecret=")
+        with self.assertRaises(subprocess.CalledProcessError):
+            render(*options, "--set", "portal.github.repositories[0]=other/repo")
+
     def test_reject_unsafe_options(self):
         for options in (("replicas=2",), ("openshift.pocketSCC=privileged",), ("serviceAccount.namespaceRole=cluster-admin",), ("ingress.pocketHost=",), ("ingress.portalHost=",), ("ingress.enabled=false",)):
             with self.subTest(options=options), self.assertRaises(subprocess.CalledProcessError):

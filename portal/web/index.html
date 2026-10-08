@@ -25,7 +25,11 @@
 
   <section id="unlock" class="card" aria-labelledby="unlock-title">
     <h2 id="unlock-title">Unlock portal</h2>
-    <p>Enter the portal token. It is kept in this page's memory only: never in the URL, cookies, or storage.</p>
+    <p id="token-help">Enter the portal token. It is kept in this page's memory only: never in the URL, cookies, or storage.</p>
+    <div id="github-login" hidden>
+      <p>Sign in with an authorized GitHub organization or team account.</p>
+      <a class="github-signin" href="/auth/github/start">Sign in with GitHub</a>
+    </div>
     <form id="token-form" autocomplete="off">
       <div class="field">
         <label for="token">Portal token</label>
@@ -38,6 +42,10 @@
   </section>
 
   <div id="app" hidden>
+    <div id="github-session" hidden>
+      <p>Signed in as <strong id="github-user"></strong>. Repository operations use the shared GitHub App bot.</p>
+      <button type="button" id="github-logout" class="secondary">Sign out</button>
+    </div>
     <section id="panel-workspace" class="card" aria-labelledby="workspace-title" role="tabpanel" aria-hidden="false">
       <h2 id="workspace-title">Agent workspace</h2>
 
@@ -83,6 +91,11 @@
 
     <section id="panel-configure" class="card" aria-labelledby="configure-title" role="tabpanel" aria-hidden="true" hidden>
       <h2 id="configure-title">Configuration</h2>
+      <section id="github-integration" hidden>
+        <h3>GitHub App bot</h3>
+        <p id="github-repositories"></p>
+        <p class="hint">Tokens are repository-scoped and short-lived, renewed per Git/gh operation. No personal login token is shared with the agent. Actions write permits more than dispatch; workflow-file writes are not granted.</p>
+      </section>
 
       <section aria-labelledby="apikeys-title">
         <h3 id="apikeys-title">Runtime API keys</h3>

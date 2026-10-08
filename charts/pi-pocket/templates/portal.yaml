@@ -3,10 +3,14 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "pocket.fullname" . }}-portal
+  namespace: {{ include "pocket.portalNamespace" . }}
   labels:
     {{- include "pocket.labels" . | nindent 4 }}
 spec:
   replicas: 1
+  # Sessions are deliberately in memory. Recreate avoids two independent
+  # session stores during upgrades and asks operators to sign in again.
+  strategy: {type: Recreate}
   selector:
     matchLabels:
       app.kubernetes.io/instance: {{ .Release.Name }}
@@ -56,6 +60,26 @@ spec:
             - name: POD_UID
               valueFrom:
                 fieldRef: {fieldPath: metadata.uid}
+            - name: POCKET_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: PORTAL_AUTH_MODE
+              value: {{ .Values.portal.authMode | quote }}
+            {{- if include "pocket.githubEnabled" . }}
+            - name: POCKET_SERVICE_ACCOUNT
+              value: {{ include "pocket.fullname" . }}
+            - name: GITHUB_APP_ID
+              value: {{ .Values.portal.github.appID | quote }}
+            - name: GITHUB_CLIENT_ID
+              value: {{ .Values.portal.github.clientID | quote }}
+            - name: GITHUB_INSTALLATION_ID
+              value: {{ .Values.portal.github.installationID | quote }}
+            - name: GITHUB_ORGANIZATION
+              value: {{ .Values.portal.github.organization | quote }}
+            - name: GITHUB_TEAM
+              value: {{ .Values.portal.github.team | quote }}
+            - name: GITHUB_REPOSITORIES
+              value: {{ join "," .Values.portal.github.repositories | quote }}
+            {{- end }}
             - name: POCKET_DEPLOYMENT
               value: {{ include "pocket.fullname" . }}
             - name: CONFIG_SECRET
@@ -67,9 +91,15 @@ spec:
             - name: POCKET_URL
               value: {{ printf "https://%s" .Values.ingress.pocketHost | quote }}
           volumeMounts:
+            {{- if include "pocket.githubEnabled" . }}
+            - name: github-app
+              mountPath: /run/github-app
+              readOnly: true
+            {{- else }}
             - name: token
               mountPath: /run/portal
               readOnly: true
+            {{- end }}
             - name: tmp
               mountPath: /tmp
           readinessProbe:
@@ -79,10 +109,17 @@ spec:
           resources:
             {{- toYaml .Values.portal.resources | nindent 12 }}
       volumes:
+        {{- if include "pocket.githubEnabled" . }}
+        - name: github-app
+          secret:
+            secretName: {{ .Values.portal.github.existingSecret }}
+            defaultMode: 0440
+        {{- else }}
         - name: token
           secret:
             secretName: {{ include "pocket.tokenSecret" . }}
             defaultMode: 0440
+        {{- end }}
         - name: tmp
           emptyDir: {}
       {{- with .Values.nodeSelector }}

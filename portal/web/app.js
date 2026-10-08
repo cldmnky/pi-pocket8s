@@ -9,6 +9,7 @@
 
   var state = {
     token: '',
+    authMode: 'token',
     config: null,
     running: null,
     authorizedKeys: '',
@@ -21,6 +22,7 @@
 
   var elementIds = [
     'message', 'unlock', 'token-form', 'token', 'unlock-button', 'app',
+    'github-login', 'github-session', 'github-user', 'github-logout', 'github-integration', 'github-repositories', 'token-help',
     'tab-workspace', 'tab-configure', 'panel-workspace', 'panel-configure',
     'owner-card', 'owner-missing', 'owner-link', 'owner-open', 'owner-copy', 'owner-qr',
     'agent-frame', 'frame-wrap', 'workspace-fullscreen', 'workspace-external', 'workspace-reload',
@@ -74,7 +76,7 @@
     var options = {
       method: method,
       headers: { Accept: 'application/json' },
-      credentials: 'omit',
+      credentials: state.authMode === 'github' ? 'same-origin' : 'omit',
       cache: 'no-store'
     };
     if (state.token !== '') {
@@ -108,6 +110,10 @@
     state.config = null;
     state.running = null;
     state.ownerLoginUrl = '';
+    elements['owner-link'].removeAttribute('href');
+    var qr = elements['owner-qr'];
+    qr.getContext('2d').clearRect(0, 0, qr.width, qr.height);
+    elements['github-session'].hidden = true;
     elements.token.value = '';
     elements.app.hidden = true;
     elements.unlock.hidden = false;
@@ -181,11 +187,9 @@
       setMessage('The agent URL is not configured.', 'error');
       return;
     }
-    if (frame.getAttribute('src') !== target) {
-      frame.setAttribute('src', target);
-    } else {
-      frame.contentWindow.location.reload();
-    }
+    // Assigning src is permitted across origins; inspecting the embedded
+    // window's location/reload method is not.
+    frame.setAttribute('src', target);
   }
 
   async function unlock(event) {
@@ -505,8 +509,45 @@
     }
   }
 
+  async function initAuth() {
+    elements['token-form'].hidden = true;
+    try {
+      var response = await fetch('/auth/session', { credentials: 'same-origin', cache: 'no-store' });
+      if (!response.ok) throw new Error('Authentication unavailable');
+      var session = await response.json();
+      state.authMode = session.mode;
+      elements['github-login'].hidden = session.mode !== 'github';
+      elements['token-form'].hidden = session.mode === 'github';
+      elements['token-help'].hidden = session.mode === 'github';
+      if (session.mode === 'github' && session.authenticated) {
+        await refreshConfig();
+        await refreshStatus();
+        var integration = await api('GET', '/api/github/status');
+        elements['github-integration'].hidden = !integration.enabled;
+        elements['github-repositories'].textContent = 'Allowed repositories: ' + (integration.repositories || []).join(', ');
+        elements['github-user'].textContent = session.login;
+        elements['github-session'].hidden = false;
+        elements.unlock.hidden = true;
+        elements.app.hidden = false;
+        selectTab('workspace');
+        loadFrame();
+      }
+    } catch (err) {
+      setMessage('Authentication unavailable. Refresh to retry.', 'error');
+    }
+  }
+
+  async function logout() {
+    try {
+      var response = await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin', cache: 'no-store' });
+      if (!response.ok) throw new Error('Logout failed');
+      lock();
+    } catch (err) { setMessage('Sign out failed. Refresh to retry.', 'error'); }
+  }
+
   function init() {
     cacheElements();
+    elements['github-logout'].addEventListener('click', logout);
     elements['token-form'].addEventListener('submit', unlock);
     elements['tab-workspace'].addEventListener('click', function () { selectTab('workspace'); });
     elements['tab-configure'].addEventListener('click', function () { selectTab('configure'); });
@@ -541,6 +582,7 @@
     elements['save-config'].addEventListener('click', saveConfig);
     elements['reload-config'].addEventListener('click', reloadConfig);
     updateControls();
+    initAuth();
   }
 
   document.addEventListener('DOMContentLoaded', init);

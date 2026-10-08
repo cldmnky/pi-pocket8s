@@ -82,7 +82,27 @@ spec:
             - name: POCKET_FRAME_ANCESTORS
               value: {{ printf "https://%s" .Values.ingress.portalHost | quote }}
             {{- end }}
+            {{- if include "pocket.githubEnabled" . }}
+            - name: GITHUB_BROKER_URL
+              value: {{ printf "https://%s/api/github/credentials" .Values.ingress.portalHost | quote }}
+            - name: GITHUB_BROKER_TOKEN_FILE
+              value: /run/github-broker/token
+            {{- if .Values.portal.github.brokerCASecret }}
+            - name: GITHUB_BROKER_CA_FILE
+              value: /run/github-broker-ca/ca.crt
+            {{- end }}
+            {{- end }}
           volumeMounts:
+            {{- if include "pocket.githubEnabled" . }}
+            - name: github-broker
+              mountPath: /run/github-broker
+              readOnly: true
+            {{- if .Values.portal.github.brokerCASecret }}
+            - name: github-broker-ca
+              mountPath: /run/github-broker-ca
+              readOnly: true
+            {{- end }}
+            {{- end }}
             - name: workspace
               mountPath: /workspace
             - name: runtime-config
@@ -106,6 +126,22 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
+        {{- if include "pocket.githubEnabled" . }}
+        - name: github-broker
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  audience: pi-pocket-github
+                  expirationSeconds: 3600
+        {{- if .Values.portal.github.brokerCASecret }}
+        - name: github-broker-ca
+          secret:
+            secretName: {{ .Values.portal.github.brokerCASecret }}
+            defaultMode: 0440
+        {{- end }}
+        {{- end }}
         - name: workspace
           persistentVolumeClaim:
             claimName: {{ include "pocket.claim" . }}

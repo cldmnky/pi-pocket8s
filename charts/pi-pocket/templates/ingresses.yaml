@@ -33,6 +33,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: {{ include "pocket.fullname" . }}-portal
+  namespace: {{ include "pocket.portalNamespace" . }}
   labels:
     {{- include "pocket.labels" . | nindent 4 }}
   annotations:
