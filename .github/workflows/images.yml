@@ -168,7 +168,7 @@ jobs:
 
           # The portal-iframe embed patches applied to the pinned upstream sources.
           docker exec smoke sh -c 'grep -qx "        .frame-ancestors .self. https://portal.example.com.," /opt/pi-pocket/src/server/http/assets.ts'
-          docker exec smoke sh -c '[ "$(grep -c SameSite=None /opt/pi-pocket/src/server/http/auth.ts)" = 2 ]'
+          docker exec smoke sh -c '[ "$(grep -c SameSite=None /opt/pi-pocket/src/server/auth.ts)" = 2 ]'
           docker logs smoke 2>&1 | grep -q 'embedded mode enabled for https://portal.example.com'
 
           # Node 24 with its built-in SQLite, plus the upstream runtime dependencies.
