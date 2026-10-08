@@ -168,3 +168,4 @@ oc exec -n pi-pocket deploy/pi-pocket -- oc auth can-i get secrets
 ```
 
 Server-side dry-run of Deployments checks API schemas, not actual pod scheduling/mount support. See [research and validation notes](docs/research.md) for the live user-namespace/PVC admission probe and source references.
+
