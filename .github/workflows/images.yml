@@ -1,0 +1,250 @@
+# Container images for Pi Pocket and its portal.
+#
+#   pull_request: build both architectures for both images, no push; the amd64
+#                 pi-pocket image is loaded and smoke tested.
+#   main/tags/manual/scheduled: same builds, pushed per architecture by digest to
+#                 quay.io/cldmnky/<image>, then merged into one manifest list
+#                 tagged sha-<commit> (immutable) and, on main only, latest.
+#
+# The pi-pocket image pins the upstream commit in images/Containerfile; scheduled runs
+# exist to pick up newer UBI 10 base images and RHEL packages.
+name: images
+
+on:
+  pull_request:
+    paths:
+      - ".dockerignore"
+      - ".github/workflows/images.yml"
+      - "images/**"
+      - "portal/**"
+      - "Makefile"
+  push:
+    branches:
+      - main
+    paths:
+      - ".dockerignore"
+      - ".github/workflows/images.yml"
+      - "images/**"
+      - "portal/**"
+      - "Makefile"
+    tags:
+      - "*"
+  schedule:
+    - cron: "43 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: images-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  QUAY_REGISTRY: quay.io
+  QUAY_NAMESPACE: cldmnky
+
+jobs:
+  build:
+    name: build ${{ matrix.image }} (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: pi-pocket
+            containerfile: images/Containerfile
+            context: .
+            platform: linux/amd64
+            arch: amd64
+          - image: pi-pocket
+            containerfile: images/Containerfile
+            context: .
+            platform: linux/arm64
+            arch: arm64
+          - image: pi-pocket-portal
+            containerfile: portal/Containerfile
+            context: portal
+            platform: linux/amd64
+            arch: amd64
+          - image: pi-pocket-portal
+            containerfile: portal/Containerfile
+            context: portal
+            platform: linux/arm64
+            arch: arm64
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to Quay
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.QUAY_REGISTRY }}
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_TOKEN }}
+
+      - name: Build
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.containerfile }}
+          platforms: ${{ matrix.platform }}
+          pull: true
+          provenance: false
+          # Push events export one architecture per job by digest; the merge job joins
+          # them. Pull requests build locally and only the amd64 pi-pocket image is
+          # loaded for the smoke test.
+          outputs: ${{ github.event_name != 'pull_request' && format('type=image,name={0}/{1}/{2},push-by-digest=true,push=true', env.QUAY_REGISTRY, env.QUAY_NAMESPACE, matrix.image) || '' }}
+          tags: ${{ github.event_name == 'pull_request' && format('local/{0}:pr', matrix.image) || '' }}
+          load: ${{ github.event_name == 'pull_request' && matrix.image == 'pi-pocket' && matrix.platform == 'linux/amd64' }}
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.arch }}
+
+      - name: Smoke test the pi-pocket image
+        if: github.event_name == 'pull_request' && matrix.image == 'pi-pocket' && matrix.platform == 'linux/amd64'
+        run: |
+          set -euo pipefail
+          docker volume rm -f smoke-home smoke-repos >/dev/null 2>&1 || true
+          docker run --detach --name smoke --publish 127.0.0.1:8787:8787 \
+            --volume smoke-home:/workspace/home \
+            --volume smoke-repos:/workspace/repos \
+            local/pi-pocket:pr
+
+          ready=0
+          status=""
+          for _ in $(seq 1 60); do
+            status="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8787/ || true)"
+            if [ "${status}" = "200" ]; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+
+          docker logs smoke || true
+          if [ "${ready}" != "1" ]; then
+            echo "::error::pi-pocket did not answer on :8787 (last status: ${status:-none})"
+            exit 1
+          fi
+
+          # The entrypoint prepared the persistent workspace and skipped the
+          # kubeconfig (no service account is mounted here).
+          docker exec smoke test -d /workspace/home/.pi
+          docker exec smoke test -d /workspace/home/.pi-pocket
+          docker exec smoke test -d /workspace/home/.ssh
+          docker exec smoke sh -c 'test ! -e /workspace/home/.kube/config'
+
+          # Nested-container Podman support: vfs storage, a subuid/subgid range inside
+          # the pod's outer 65536-uid mapping, and setuid/filecap helper binaries.
+          docker exec smoke sh -c 'grep -q "driver = \"vfs\"" /etc/containers/storage.conf'
+          docker exec smoke sh -c 'grep -qx "pocket:10000:50000" /etc/subuid && grep -qx "pocket:10000:50000" /etc/subgid'
+          docker exec smoke sh -c 'getcap /usr/bin/newuidmap | grep -q cap_setuid && getcap /usr/bin/newgidmap | grep -q cap_setgid'
+
+          # The owner sign-in token and its QR code must not reach the container log;
+          # the token itself stays in config.json (never printed by this job).
+          token="$(docker exec smoke node -e 'const { ownerToken } = require("/workspace/home/.pi-pocket/config.json"); process.stdout.write(ownerToken)')"
+          if [ -z "${token}" ]; then
+            echo "::error::could not read the owner token from config.json"
+            exit 1
+          fi
+          if docker logs smoke 2>&1 | grep -qF "${token}"; then
+            echo "::error::the owner token leaked into the container log"
+            exit 1
+          fi
+          docker logs smoke 2>&1 | grep -q '\[redacted\]' || { echo "::error::the sign-in link was not redacted in the log"; exit 1; }
+          docker logs smoke 2>&1 | grep -q 'QR code hidden' || { echo "::error::the sign-in QR code was not hidden in the log"; exit 1; }
+
+          # Node 24 with its built-in SQLite, plus the upstream runtime dependencies.
+          docker exec smoke node -e 'const { DatabaseSync } = require("node:sqlite"); new DatabaseSync(":memory:").exec("select 1"); console.log("node:sqlite ok")'
+          docker exec --workdir /opt/pi-pocket smoke node -e 'import("jiti").then(() => console.log("jiti ok"))'
+          docker exec smoke rg --version
+          docker exec smoke chromium --version
+          docker exec smoke kubectl version --client
+          docker exec smoke helm version
+          docker exec smoke oc version --client
+
+      - name: Clean up the smoke container
+        if: always() && github.event_name == 'pull_request' && matrix.image == 'pi-pocket' && matrix.platform == 'linux/amd64'
+        run: |
+          docker rm -f smoke >/dev/null 2>&1 || true
+          docker volume rm -f smoke-home smoke-repos >/dev/null 2>&1 || true
+
+      - name: Record the pushed digest
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p digests
+          echo "${{ steps.build.outputs.digest }}" > "digests/${{ matrix.arch }}.txt"
+
+      - name: Upload the pushed digest
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: digest-${{ matrix.image }}-${{ matrix.arch }}
+          path: digests/${{ matrix.arch }}.txt
+          retention-days: 1
+          if-no-files-found: error
+
+  merge:
+    name: merge ${{ matrix.image }}
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        image:
+          - pi-pocket
+          - pi-pocket-portal
+    steps:
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to Quay
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.QUAY_REGISTRY }}
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_TOKEN }}
+
+      - name: Download the pushed digests
+        uses: actions/download-artifact@v8
+        with:
+          pattern: digest-${{ matrix.image }}-*
+          path: digests
+          merge-multiple: true
+
+      - name: Create the multi-arch manifest
+        env:
+          IMAGE: ${{ env.QUAY_REGISTRY }}/${{ env.QUAY_NAMESPACE }}/${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          refs=()
+          for file in digests/*.txt; do
+            digest="$(cat "${file}")"
+            if [ -z "${digest}" ]; then
+              echo "::error::empty digest in ${file}"
+              exit 1
+            fi
+            refs+=("${IMAGE}@${digest}")
+          done
+          if [ "${#refs[@]}" -ne 2 ]; then
+            echo "::error::expected amd64 and arm64 digests, found ${#refs[@]}"
+            exit 1
+          fi
+
+          tags=("--tag" "${IMAGE}:sha-${GITHUB_SHA}")
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            tags+=("--tag" "${IMAGE}:latest")
+          fi
+
+          docker buildx imagetools create "${tags[@]}" "${refs[@]}"
+          docker buildx imagetools inspect "${IMAGE}:sha-${GITHUB_SHA}"

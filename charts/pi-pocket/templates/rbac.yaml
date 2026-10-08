@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "pocket.fullname" . }}
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+{{- if .Values.serviceAccount.namespaceRole }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "pocket.fullname" . }}-namespace
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Values.serviceAccount.namespaceRole }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "pocket.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- if and .Values.openshift.enabled .Values.openshift.bindSCC }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "pocket.fullname" . }}-scc
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:{{ .Values.openshift.pocketSCC }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "pocket.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- if .Values.portal.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "pocket.fullname" . }}-portal
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "pocket.fullname" . }}-portal
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [{{ include "pocket.runtimeSecret" . | quote }}]
+    verbs: [get, patch, update]
+  - apiGroups: [apps]
+    resources: [deployments, deployments/scale]
+    resourceNames: [{{ include "pocket.fullname" . | quote }}]
+    verbs: [get, patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "pocket.fullname" . }}-portal
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "pocket.fullname" . }}-portal
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "pocket.fullname" . }}-portal
+    namespace: {{ .Release.Namespace }}
+{{- if and .Values.openshift.enabled .Values.openshift.bindSCC }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "pocket.fullname" . }}-portal-scc
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:restricted-v3
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "pocket.fullname" . }}-portal
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}

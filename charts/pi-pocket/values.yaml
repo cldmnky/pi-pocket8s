@@ -1,0 +1,63 @@
+nameOverride: ""
+fullnameOverride: ""
+image:
+  repository: quay.io/cldmnky/pi-pocket
+  tag: latest
+  pullPolicy: Always
+imagePullSecrets: []
+# Exactly one process may open pocket.sqlite. Recreate avoids overlapping writers.
+replicas: 1
+openshift:
+  enabled: true
+  # nested-container permits rootless Podman inside the pod user namespace.
+  # restricted-v3 removes those permissions (Podman execution then is limited).
+  pocketSCC: nested-container
+  bindSCC: true
+# Override the pocket pod seccomp profile. Empty selects per-profile defaults:
+# Unconfined for nested-container (nested user namespaces), RuntimeDefault for
+# restricted-v3 (the only profile that SCC allows).
+podSeccomp: ""
+serviceAccount:
+  # WARNING: steering the agent grants this namespace-level Kubernetes authority.
+  namespaceRole: admin
+persistence:
+  existingClaim: ""
+  size: 40Gi
+  storageClass: ""
+  accessModes: [ReadWriteOnce]
+  # Helm uninstall retains repositories, SQLite state, OAuth logins and caches.
+  retain: true
+runtimeSecret:
+  existingSecret: ""
+portal:
+  enabled: true
+  image:
+    repository: quay.io/cldmnky/pi-pocket-portal
+    tag: latest
+    pullPolicy: Always
+  tokenSecret: ""
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+resources:
+  requests: {cpu: 500m, memory: 1Gi}
+  limits: {cpu: "4", memory: 8Gi}
+ingress:
+  enabled: true
+  className: openshift-default
+  pocketHost: ""
+  portalHost: ""
+  # On OpenShift, omission uses the router's default certificate.
+  pocketTLSSecret: ""
+  portalTLSSecret: ""
+  annotations:
+    route.openshift.io/termination: edge
+    route.openshift.io/insecureEdgeTerminationPolicy: Redirect
+    haproxy.router.openshift.io/timeout: 1h
+networkPolicy:
+  enabled: true
+  ingressNamespaceSelector:
+    matchLabels:
+      network.openshift.io/policy-group: ingress
+nodeSelector: {}
+tolerations: []

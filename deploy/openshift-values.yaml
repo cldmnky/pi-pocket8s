@@ -1,0 +1,12 @@
+# Profile researched against voyage-test/api-voyager-blahonga-me:6443/kube:admin
+# OpenShift 4.22.8 / Kubernetes 1.35.6. Install into dedicated namespace pi-pocket.
+persistence:
+  storageClass: lvms-vg1
+  size: 40Gi
+ingress:
+  className: openshift-default
+  pocketHost: pocket.apps.voyager.blahonga.me
+  portalHost: pocket-portal.apps.voyager.blahonga.me
+openshift:
+  enabled: true
+  pocketSCC: nested-container

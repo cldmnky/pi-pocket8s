@@ -1,0 +1,96 @@
+{{- if .Values.portal.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pocket.fullname" . }}-portal
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: portal
+  template:
+    metadata:
+      labels:
+        {{- include "pocket.labels" . | nindent 8 }}
+        app.kubernetes.io/component: portal
+      {{- if .Values.openshift.enabled }}
+      annotations:
+        openshift.io/required-scc: restricted-v3
+      {{- end }}
+    spec:
+      hostUsers: false
+      serviceAccountName: {{ include "pocket.fullname" . }}-portal
+      automountServiceAccountToken: true
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: portal
+          image: "{{ .Values.portal.image.repository }}:{{ .Values.portal.image.tag }}"
+          imagePullPolicy: {{ .Values.portal.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef: {fieldPath: metadata.namespace}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef: {fieldPath: metadata.name}
+            - name: POD_UID
+              valueFrom:
+                fieldRef: {fieldPath: metadata.uid}
+            - name: POCKET_DEPLOYMENT
+              value: {{ include "pocket.fullname" . }}
+            - name: CONFIG_SECRET
+              value: {{ include "pocket.runtimeSecret" . }}
+            - name: PORTAL_TOKEN_FILE
+              value: /run/portal/token
+            - name: PORTAL_ORIGIN
+              value: {{ printf "https://%s" .Values.ingress.portalHost | quote }}
+            - name: POCKET_URL
+              value: {{ printf "https://%s" .Values.ingress.pocketHost | quote }}
+          volumeMounts:
+            - name: token
+              mountPath: /run/portal
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+          resources:
+            {{- toYaml .Values.portal.resources | nindent 12 }}
+      volumes:
+        - name: token
+          secret:
+            secretName: {{ include "pocket.tokenSecret" . }}
+            defaultMode: 0440
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

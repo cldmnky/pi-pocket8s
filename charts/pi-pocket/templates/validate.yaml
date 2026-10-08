@@ -1,0 +1,18 @@
+{{- if not (has (int .Values.replicas) (list 0 1)) -}}
+{{- fail "replicas must be 0 or 1: pi-pocket uses a single-writer SQLite database" -}}
+{{- end -}}
+{{- if and .Values.openshift.enabled (not (has .Values.openshift.pocketSCC (list "restricted-v3" "nested-container"))) -}}
+{{- fail "openshift.pocketSCC must be restricted-v3 or nested-container" -}}
+{{- end -}}
+{{- if and .Values.ingress.enabled (empty .Values.ingress.pocketHost) -}}
+{{- fail "ingress.pocketHost is required" -}}
+{{- end -}}
+{{- if and .Values.portal.enabled .Values.ingress.enabled (empty .Values.ingress.portalHost) -}}
+{{- fail "ingress.portalHost is required when portal is enabled" -}}
+{{- end -}}
+{{- if and .Values.portal.enabled (not .Values.ingress.enabled) -}}
+{{- fail "the portal requires an HTTPS ingress and explicit origin" -}}
+{{- end -}}
+{{- if not (has .Values.serviceAccount.namespaceRole (list "admin" "edit" "view" "")) -}}
+{{- fail "serviceAccount.namespaceRole must be admin, edit, view, or empty" -}}
+{{- end -}}

@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+#
+# Pi Pocket's container entrypoint. It prepares the persistent workspace, loads the
+# runtime configuration mounted at /run/pocket-config, writes a kubeconfig that reads
+# the (rotating) service account token at request time, then execs the launcher through
+# pi-pocket-log-filter as PID 1, so SIGTERM reaches it and the owner sign-in token never
+# reaches the container log.
+#
+# Everything the container writes lives under /workspace/home (persistent volume) or
+# /workspace/repos (working trees). The process runs as UID/GID 1000. See images/README.md.
+set -euo pipefail
+
+readonly HOME_DIR="${HOME:-/workspace/home}"
+readonly REPOS_DIR="/workspace/repos"
+readonly DATA_DIR="${PI_POCKET_DIR:-${HOME_DIR}/.pi-pocket}"
+readonly CONFIG_DIR="/run/pocket-config"
+readonly SA_DIR="/var/run/secrets/kubernetes.io/serviceaccount"
+readonly API_KEYS_FILE="${CONFIG_DIR}/api-keys.json"
+
+# The only secret keys that may become environment variables. Anything else in
+# api-keys.json is ignored, so the runtime secret cannot inject arbitrary env.
+readonly API_KEY_NAMES=(
+    ANTHROPIC_API_KEY
+    OPENAI_API_KEY
+    GEMINI_API_KEY
+    GOOGLE_API_KEY
+    GROQ_API_KEY
+    OPENROUTER_API_KEY
+    MISTRAL_API_KEY
+    DEEPSEEK_API_KEY
+    XAI_API_KEY
+    AWS_ACCESS_KEY_ID
+    AWS_SECRET_ACCESS_KEY
+    AWS_SESSION_TOKEN
+    AWS_REGION
+)
+
+log() { printf '[pi-pocket-entrypoint] %s\n' "$*" >&2; }
+warn() { printf '[pi-pocket-entrypoint] WARNING: %s\n' "$*" >&2; }
+
+prepare_directories() {
+    local dir
+
+    for dir in \
+        "${HOME_DIR}" \
+        "${HOME_DIR}/.pi" \
+        "${DATA_DIR}" \
+        "${HOME_DIR}/.ssh" \
+        "${HOME_DIR}/.kube" \
+        "${HOME_DIR}/.config" \
+        "${HOME_DIR}/.cache" \
+        "${HOME_DIR}/.cache/pip" \
+        "${HOME_DIR}/.cache/go-build" \
+        "${HOME_DIR}/.local/bin" \
+        "${HOME_DIR}/.local/share" \
+        "${HOME_DIR}/.run" \
+        "${HOME_DIR}/.npm" \
+        "${HOME_DIR}/go" \
+        "${REPOS_DIR}"; do
+        if ! mkdir -p "${dir}" 2>/dev/null; then
+            warn "cannot create ${dir}; check that the volume is writable by UID 1000 (fsGroup 1000)"
+        fi
+    done
+
+    chmod 0700 "${HOME_DIR}/.ssh" "${HOME_DIR}/.run" "${HOME_DIR}/.pi" "${DATA_DIR}" 2>/dev/null || true
+    # XDG_RUNTIME_DIR is the chart's emptyDir (/run/user/1000) in-cluster, or a
+    # plain directory under /run for local runs.
+    if mkdir -p "${XDG_RUNTIME_DIR:-/run/user/1000}" 2>/dev/null; then
+        chmod 0700 "${XDG_RUNTIME_DIR:-/run/user/1000}" 2>/dev/null || true
+    else
+        warn "cannot create ${XDG_RUNTIME_DIR:-/run/user/1000}"
+    fi
+    chmod 0755 "${REPOS_DIR}" 2>/dev/null || true
+
+    if [ ! -w "${HOME_DIR}" ]; then
+        warn "${HOME_DIR} is not writable by UID $(id -u); Pi Pocket keeps its data there and will fail"
+    fi
+}
+
+# api-keys.json is a flat JSON object of allowlisted provider/env names. Values are
+# exported into the launcher's environment; a changed secret therefore needs a restart
+# (the portal asks for one) because the variables are read once, at process start.
+load_api_keys() {
+    if [ ! -f "${API_KEYS_FILE}" ]; then
+        return 0
+    fi
+
+    if ! jq -e 'type == "object"' "${API_KEYS_FILE}" >/dev/null 2>&1; then
+        warn "${API_KEYS_FILE} is not a JSON object; no provider keys were exported"
+        return 0
+    fi
+
+    local name value loaded=0
+
+    for name in "${API_KEY_NAMES[@]}"; do
+        value="$(jq -r --arg key "${name}" \
+            'if (.[$key] | type) == "string" then .[$key] else empty end' \
+            "${API_KEYS_FILE}" 2>/dev/null)" || value=""
+        if [ -z "${value}" ]; then
+            continue
+        fi
+        export "${name}=${value}"
+        loaded=$((loaded + 1))
+    done
+
+    log "exported ${loaded} of ${#API_KEY_NAMES[@]} allowlisted provider key(s) from ${API_KEYS_FILE}"
+}
+
+# authorized_keys and known_hosts are exposed as files for tooling (git, ssh clients);
+# no sshd runs in this image. The optional id_ed25519 is the agent's outbound SSH key.
+install_ssh_file() {
+    local name="$1"
+    local mode="$2"
+    local source="${CONFIG_DIR}/${name}"
+    local target="${HOME_DIR}/.ssh/${name}"
+
+    if [ ! -f "${source}" ]; then
+        return 0
+    fi
+
+    if cp "${source}" "${target}" 2>/dev/null && chmod "${mode}" "${target}" 2>/dev/null; then
+        log "installed ~/.ssh/${name}"
+    else
+        warn "could not install ~/.ssh/${name}"
+    fi
+}
+
+# The kubeconfig points at the mounted token file and CA bundle instead of a snapshot:
+# kubectl and oc read the token on every request, so projected service account tokens
+# rotate without a restart. POD_NAMESPACE/POD_NAME/POD_UID name the pod it belongs to.
+write_kubeconfig() {
+    if [ ! -r "${SA_DIR}/token" ] || [ ! -r "${SA_DIR}/ca.crt" ]; then
+        log "no service account at ${SA_DIR}; skipping kubeconfig"
+        return 0
+    fi
+
+    local namespace="${POD_NAMESPACE:-default}"
+    local pod="${POD_NAME:-pi-pocket}"
+    local uid="${POD_UID:-unknown}"
+    local server="https://kubernetes.default.svc"
+
+    if [ -n "${KUBERNETES_SERVICE_HOST:-}" ]; then
+        server="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT_HTTPS:-${KUBERNETES_SERVICE_PORT:-443}}"
+    fi
+
+    cat > "${HOME_DIR}/.kube/config" <<EOF
+# Written by pi-pocket-entrypoint for pod ${pod} (${uid}) in namespace ${namespace}.
+# The bearer token is read from ${SA_DIR}/token on every request, so rotated
+# service account tokens are used without restarting the container.
+apiVersion: v1
+kind: Config
+clusters:
+    - name: in-cluster
+      cluster:
+          server: ${server}
+          certificate-authority: ${SA_DIR}/ca.crt
+users:
+    - name: pi-pocket
+      user:
+          tokenFile: ${SA_DIR}/token
+contexts:
+    - name: ${namespace}/${pod}
+      context:
+          cluster: in-cluster
+          user: pi-pocket
+          namespace: ${namespace}
+current-context: ${namespace}/${pod}
+preferences: {}
+EOF
+    chmod 0600 "${HOME_DIR}/.kube/config"
+    export KUBECONFIG="${HOME_DIR}/.kube/config"
+    log "wrote kubeconfig for namespace ${namespace} (service account token is live, not a snapshot)"
+}
+
+launch() {
+    local port="${PI_POCKET_PORT:-8787}"
+
+    # Upstream launches $PI_POCKET_BROWSER when its browser feature needs one;
+    # --no-sandbox is required inside user namespaces. Operators can override.
+    export PI_POCKET_BROWSER="${PI_POCKET_BROWSER:-/usr/local/bin/chromium}"
+    export PI_POCKET_BROWSER_ARGS="${PI_POCKET_BROWSER_ARGS:---no-sandbox}"
+
+    if ! cd "${REPOS_DIR}" 2>/dev/null; then
+        warn "cannot enter ${REPOS_DIR}; starting from ${HOME_DIR}"
+        cd "${HOME_DIR}"
+    fi
+
+    log "pod=${POD_NAME:-?} uid=${POD_UID:-?} namespace=${POD_NAMESPACE:-?}"
+    log "home=${HOME_DIR} repos=${REPOS_DIR} data=${DATA_DIR}"
+    log "starting Pi Pocket on 0.0.0.0:${port} (noninteractive)"
+
+    # pi-pocket-log-filter redacts the owner sign-in token and QR code from the launcher
+    # log (errors pass through) and forwards signals to the launcher it runs.
+    exec /usr/local/bin/pi-pocket-log-filter \
+        --host 0.0.0.0 \
+        --port "${port}" \
+        --cwd "${REPOS_DIR}" \
+        --data "${DATA_DIR}"
+}
+
+prepare_directories
+load_api_keys
+install_ssh_file authorized_keys 0600
+install_ssh_file known_hosts 0600
+install_ssh_file id_ed25519 0600
+write_kubeconfig
+
+# `docker run <image> bash` (or a Kubernetes command override) still gets a prepared
+# workspace; with no arguments the image starts Pi Pocket itself.
+if [ "$#" -gt 0 ]; then
+    log "running command: $*"
+    exec "$@"
+fi
+
+launch

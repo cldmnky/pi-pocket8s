@@ -1,0 +1,58 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "pocket.fullname" . }}
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  # Render tls only with an explicit Secret: an empty tls stanza (hosts but no
+  # secretName) stops the ingress operator from creating the Route. Without it,
+  # route.openshift.io/termination=edge serves the router's default certificate.
+  {{- if .Values.ingress.pocketTLSSecret }}
+  tls:
+    - hosts: [{{ .Values.ingress.pocketHost | quote }}]
+      secretName: {{ .Values.ingress.pocketTLSSecret }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.pocketHost | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "pocket.fullname" . }}
+                port: {name: http}
+{{- if .Values.portal.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "pocket.fullname" . }}-portal
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.portalTLSSecret }}
+  tls:
+    - hosts: [{{ .Values.ingress.portalHost | quote }}]
+      secretName: {{ .Values.ingress.portalTLSSecret }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.portalHost | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "pocket.fullname" . }}-portal
+                port: {name: http}
+{{- end }}
+{{- end }}

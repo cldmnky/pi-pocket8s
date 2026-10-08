@@ -1,0 +1,245 @@
+# Pi Pocket on UBI 10, with an integrated developer toolchain (Go, Node 24, Python,
+# build tools, Podman/Skopeo/Buildah, kubectl/oc/helm, ripgrep, jq, ...).
+#
+# Build from the repository root (the containerfile clones upstream itself):
+#
+#   podman build --pull -f images/Containerfile -t pi-pocket .
+#
+# The upstream source is pinned by commit and its working tree is verified after the
+# shallow fetch. See images/README.md for the runtime contract and the CI tag policy.
+
+ARG BASE_IMAGE=registry.access.redhat.com/ubi10/ubi:latest
+
+# ── upstream source, pinned by commit ─────────────────────────────────────────────
+FROM ${BASE_IMAGE} AS source
+
+ARG PI_POCKET_REPOSITORY=https://github.com/TannerMidd/pi-pocket.git
+ARG PI_POCKET_COMMIT=55849dd3769f1cc265404443193c1ab4385aeedb
+
+RUN set -eux; \
+    dnf install -y --setopt=install_weak_deps=False git \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf /var/cache/yum
+
+WORKDIR /src
+RUN set -eux; \
+    git init -q /src/pi-pocket; \
+    cd /src/pi-pocket; \
+    git remote add origin "${PI_POCKET_REPOSITORY}"; \
+    git fetch -q --depth 1 origin "${PI_POCKET_COMMIT}"; \
+    git checkout -q FETCH_HEAD; \
+    test "$(git rev-parse HEAD)" = "${PI_POCKET_COMMIT}"; \
+    test -f package-lock.json; \
+    test -f bin/pi-pocket.js; \
+    rm -rf /src/pi-pocket/.git
+
+# ── runtime image ─────────────────────────────────────────────────────────────────
+FROM ${BASE_IMAGE}
+
+ARG PI_POCKET_VERSION=0.11.0
+ARG PI_POCKET_COMMIT=55849dd3769f1cc265404443193c1ab4385aeedb
+ARG TARGETARCH
+
+ARG RIPGREP_VERSION=15.2.0
+ARG KUBECTL_VERSION=v1.35.6
+ARG HELM_VERSION=v4.3.0
+ARG OC_VERSION=4.22.17
+# Chrome for Testing, pinned Stable. CfT publishes no checksums, so the
+# version is pinned exactly and downloads use HTTPS from Google's bucket.
+ARG CHROME_VERSION=155.0.8059.39
+
+LABEL \
+    name="pi-pocket" \
+    vendor="cldmnky" \
+    version="${PI_POCKET_VERSION}" \
+    summary="Pi Pocket with an integrated RHEL 10 developer toolchain" \
+    description="Durable, multiplayer web app for Pi agents (upstream pi-pocket ${PI_POCKET_VERSION}, commit ${PI_POCKET_COMMIT}) on UBI 10, running as UID/GID 1000 with a persistent /workspace/home." \
+    io.k8s.display-name="Pi Pocket" \
+    io.k8s.description="Pi Pocket and its agents' toolchain (Node 24, Go, Python, C/C++/cmake, git/ssh, podman/buildah/skopeo, kubectl/oc/helm, headless Chromium)." \
+    io.openshift.tags="pi-pocket,ai,devtools" \
+    io.openshift.expose-services="8787:http" \
+    org.opencontainers.image.title="pi-pocket" \
+    org.opencontainers.image.description="Pi Pocket on UBI 10 with an integrated developer toolchain" \
+    org.opencontainers.image.source="https://github.com/cldmnky/pi-pocket8s" \
+    org.opencontainers.image.url="https://github.com/TannerMidd/pi-pocket" \
+    org.opencontainers.image.version="${PI_POCKET_VERSION}" \
+    org.opencontainers.image.revision="${PI_POCKET_COMMIT}" \
+    org.opencontainers.image.licenses="MIT"
+
+# RHEL 10 ships Node.js 24 as versioned binaries (node-24, npm-24, npx-24); Node's own
+# tools and the upstream launcher expect plain names on PATH.
+# Chromium runtime libraries (for chrome-headless-shell below): all from UBI
+# repos, verified on both arches. EPEL chromium is intentionally NOT used:
+# it requires libpipewire, which no UBI 10 container repo provides.
+RUN set -eux; \
+    dnf install -y --setopt=install_weak_deps=False \
+        alsa-lib \
+        atk \
+        at-spi2-atk \
+        at-spi2-core \
+        cmake \
+        curl \
+        dejavu-sans-fonts \
+        diffutils \
+        file \
+        fontconfig \
+        fuse-overlayfs \
+        gcc \
+        gcc-c++ \
+        git \
+        golang \
+        jq \
+        less \
+        libcap \
+        libX11 \
+        libXcomposite \
+        libXdamage \
+        libXext \
+        libXfixes \
+        libXrandr \
+        libxcb \
+        libxkbcommon \
+        make \
+        mesa-libgbm \
+        nspr \
+        nss \
+        nodejs24 \
+        nodejs24-npm \
+        openssh \
+        openssh-clients \
+        openssl \
+        patch \
+        pkgconf \
+        podman \
+        buildah \
+        skopeo \
+        procps-ng \
+        python3-pip \
+        python3-devel \
+        rsync \
+        tar \
+        unzip \
+        vim-enhanced \
+        xz \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf /var/cache/yum
+
+RUN set -eux; \
+    ln -sf /usr/bin/node-24 /usr/local/bin/node; \
+    ln -sf /usr/bin/npm-24 /usr/local/bin/npm; \
+    ln -sf /usr/bin/npx-24 /usr/local/bin/npx; \
+    node --version; \
+    npm --version; \
+    node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major < 22 || (major === 22 && minor < 19)) { throw new Error("Pi Pocket needs Node.js 22.19 or newer, found " + process.versions.node); }'
+
+# Tools that UBI has no RPM for. Every download is checked against the vendor's
+# published SHA-256 before it is installed. OpenShift publishes the amd64 oc client
+# only as rhel8/rhel9 builds; the rhel9 build of each architecture runs on RHEL 10.
+RUN set -eux; \
+    case "${TARGETARCH:-$(uname -m)}" in \
+        amd64|x86_64) rg_arch=x86_64; kube_arch=amd64; helm_arch=amd64; oc_arch=amd64; chrome_arch=linux64 ;; \
+        arm64|aarch64) rg_arch=aarch64; kube_arch=arm64; helm_arch=arm64; oc_arch=arm64; chrome_arch=linux-arm64 ;; \
+        *) echo "unsupported architecture: ${TARGETARCH:-$(uname -m)}" >&2; exit 1 ;; \
+    esac; \
+    downloads=/tmp/downloads; \
+    mkdir -p "${downloads}"; \
+    cd "${downloads}"; \
+    rg_tar="ripgrep-${RIPGREP_VERSION}-${rg_arch}-unknown-linux-musl.tar.gz"; \
+    curl -fsSL --retry 5 --retry-delay 2 -O "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${rg_tar}"; \
+    curl -fsSL --retry 5 --retry-delay 2 -O "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${rg_tar}.sha256"; \
+    sha256sum -c "${rg_tar}.sha256"; \
+    tar -xzf "${rg_tar}" --strip-components=1 -C /usr/local/bin "ripgrep-${RIPGREP_VERSION}-${rg_arch}-unknown-linux-musl/rg"; \
+    curl -fsSL --retry 5 --retry-delay 2 -o kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${kube_arch}/kubectl"; \
+    curl -fsSL --retry 5 --retry-delay 2 -o kubectl.sha256 "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${kube_arch}/kubectl.sha256"; \
+    echo "$(cat kubectl.sha256)  kubectl" | sha256sum -c -; \
+    install -m 0755 kubectl /usr/local/bin/kubectl; \
+    helm_tar="helm-${HELM_VERSION}-linux-${helm_arch}.tar.gz"; \
+    curl -fsSL --retry 5 --retry-delay 2 -O "https://get.helm.sh/${helm_tar}"; \
+    curl -fsSL --retry 5 --retry-delay 2 -O "https://get.helm.sh/${helm_tar}.sha256sum"; \
+    sha256sum -c "${helm_tar}.sha256sum"; \
+    tar -xzf "${helm_tar}" "linux-${helm_arch}/helm"; \
+    install -m 0755 "linux-${helm_arch}/helm" /usr/local/bin/helm; \
+    oc_tar="openshift-client-linux-${oc_arch}-rhel9-${OC_VERSION}.tar.gz"; \
+    curl -fsSL --retry 5 --retry-delay 2 -O "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OC_VERSION}/${oc_tar}"; \
+    curl -fsSL --retry 5 --retry-delay 2 -o sha256sum.txt "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OC_VERSION}/sha256sum.txt"; \
+    grep " ${oc_tar}\$" sha256sum.txt | sha256sum -c -; \
+    tar -xzf "${oc_tar}" oc; \
+    install -m 0755 oc /usr/local/bin/oc; \
+    curl -fsSL --retry 5 --retry-delay 2 -o chrome-headless-shell.zip "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/${chrome_arch}/chrome-headless-shell-${chrome_arch}.zip"; \
+    unzip -q chrome-headless-shell.zip -d /opt; \
+    ln -sf "/opt/chrome-headless-shell-${chrome_arch}/chrome-headless-shell" /usr/local/bin/chromium; \
+    chromium --version; \
+    rg --version; \
+    kubectl version --client; \
+    helm version; \
+    oc version --client; \
+    cd /; \
+    rm -rf "${downloads}"
+
+# UID/GID 1000 ("pocket") is fixed so the pod can run with runAsNonRoot and
+# runAsUser: 1000. The nested-container profile adds SETUID/SETGID and
+# allowPrivilegeEscalation so the setuid/filecap helpers below can build nested user
+# namespaces. The subordinate range stays inside the pod's outer 65536-uid mapping
+# (hostUsers: false), which is what newuidmap/newgidmap can map there.
+RUN set -eux; \
+    groupadd --gid 1000 pocket; \
+    useradd --uid 1000 --gid 1000 --no-create-home --home-dir /workspace/home --shell /bin/bash pocket; \
+    touch /etc/subuid /etc/subgid; \
+    sed -i '/^pocket:/d' /etc/subuid /etc/subgid; \
+    echo 'pocket:10000:50000' >> /etc/subuid; \
+    echo 'pocket:10000:50000' >> /etc/subgid; \
+    for helper in newuidmap newgidmap; do \
+        if [ ! -u "/usr/bin/${helper}" ] && ! getcap "/usr/bin/${helper}" | grep -q 'cap_'; then \
+            setcap cap_setuid,cap_setgid+ep "/usr/bin/${helper}"; \
+        fi; \
+        if [ ! -u "/usr/bin/${helper}" ] && ! getcap "/usr/bin/${helper}" | grep -q 'cap_'; then \
+            echo "${helper} needs setuid or file capabilities for rootless containers" >&2; \
+            exit 1; \
+        fi; \
+    done; \
+    getcap /usr/bin/newuidmap /usr/bin/newgidmap; \
+    mkdir -p /workspace/home /workspace/repos /run/pocket-config /opt/pi-pocket; \
+    chown 1000:1000 /workspace/home /workspace/repos; \
+    chmod 0755 /run/pocket-config; \
+    printf '# Managed by the pi-pocket image.\n# vfs keeps rootless Podman and Buildah working without /dev/fuse or host\n# devices; override with STORAGE_DRIVER when the platform allows overlay+fuse.\n\n[storage]\ndriver = "vfs"\n' > /etc/containers/storage.conf; \
+    grep -q '^driver = "vfs"$' /etc/containers/storage.conf; \
+    git config --system --add safe.directory '*'
+
+COPY --from=source /src/pi-pocket /opt/pi-pocket
+
+# npm ci uses the lockfile committed upstream, including its dev dependencies, so the
+# app can run `npm run check` and `npm test` inside the image while agents edit it.
+RUN set -eux; \
+    cd /opt/pi-pocket; \
+    npm ci --no-audit --no-fund; \
+    rm -rf /root/.npm; \
+    node --disable-warning=ExperimentalWarning --check bin/pi-pocket.js; \
+    test -x node_modules/.bin/pi; \
+    test -d node_modules/jiti
+
+COPY images/entrypoint.sh /usr/local/bin/pi-pocket-entrypoint
+COPY images/log-filter.mjs /usr/local/bin/pi-pocket-log-filter
+RUN chmod 0755 /usr/local/bin/pi-pocket-entrypoint /usr/local/bin/pi-pocket-log-filter
+
+ENV HOME=/workspace/home \
+    XDG_CONFIG_HOME=/workspace/home/.config \
+    XDG_CACHE_HOME=/workspace/home/.cache \
+    XDG_DATA_HOME=/workspace/home/.local/share \
+    XDG_RUNTIME_DIR=/run/user/1000 \
+    PI_POCKET_BROWSER=/usr/local/bin/chromium \
+    PI_POCKET_BROWSER_ARGS=--no-sandbox \
+    PI_POCKET_DIR=/workspace/home/.pi-pocket \
+    PI_POCKET_PORT=8787 \
+    PIP_CACHE_DIR=/workspace/home/.cache/pip \
+    npm_config_cache=/workspace/home/.npm \
+    GOPATH=/workspace/home/go \
+    GOMODCACHE=/workspace/home/go/pkg/mod \
+    GOCACHE=/workspace/home/.cache/go-build \
+    PATH=/workspace/home/.local/bin:/workspace/home/go/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+
+EXPOSE 8787
+
+WORKDIR /workspace/repos
+USER 1000:1000
+
+ENTRYPOINT ["/usr/local/bin/pi-pocket-entrypoint"]

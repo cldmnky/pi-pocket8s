@@ -1,0 +1,14 @@
+Pi-pocket workspace: https://{{ .Values.ingress.pocketHost }}
+{{ if .Values.portal.enabled }}Configuration portal: https://{{ .Values.ingress.portalHost }}
+Retrieve its administrative token from a trusted terminal:
+  oc get secret {{ include "pocket.tokenSecret" . }} -n {{ .Release.Namespace }} -o jsonpath='{.data.token}' | base64 --decode
+{{ end }}
+WARNING: pi-pocket steering means shell access and the configured namespace
+{{ default "(no bound role)" .Values.serviceAccount.namespaceRole }} Kubernetes rights. Use a dedicated namespace and trusted collaborators.
+
+All pods require user namespaces (hostUsers: false) and idmap-compatible storage.
+One SQLite writer only; updates use Recreate. Workspace PVC and generated
+credential Secrets are retained on uninstall. Namespace deletion is NOT a backup.
+
+See README.md for the private owner sign-in command, SSH setup, credential
+rotation, GitOps Secret management, and nested Podman limitations.

@@ -1,0 +1,11 @@
+.pi/
+.venv/
+.env
+.env.*
+!*.example
+*.pem
+*.key
+kubeconfig
+secrets/
+portal/portal
+*.tgz

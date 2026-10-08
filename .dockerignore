@@ -1,0 +1,16 @@
+# Contexts used by this repository:
+#   pi-pocket (default image): context "." with -f images/Containerfile
+#   pi-pocket-portal:          context "portal" with -f portal/Containerfile
+# The pi-pocket Containerfile clones upstream itself, so this file mainly keeps
+# local build artifacts and VCS data out of any root-context build (for example
+# the Makefile, which builds from the repository root).
+.git
+**/.git
+**/node_modules
+**/.venv
+**/__pycache__
+**/.cache
+**/dist
+**/.smoke
+*.log
+.DS_Store
