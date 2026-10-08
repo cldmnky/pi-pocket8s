@@ -232,6 +232,32 @@ restart instead.
 
 Public keys from the portal are exposed as `~/.ssh/authorized_keys` for tools/configuration. **No SSH server is enabled**, and HTTP Ingress cannot provide SSH transport. For private Git repositories, public keys alone are not authentication: use agent credentials, a Git-provider token, or separately provision an `id_ed25519` private key in the runtime Secret. The portal intentionally refuses private keys. Set `known_hosts` using host keys whose fingerprints you verified independently, not blind trust-on-first-use. SSH strict host-key checking is enabled by the runtime image.
 
+## Web search
+
+The image ships an agent **web search** tool: `web_search`, a Pi Pocket built-in extension
+(`extensions/` in this repository, installed under `/opt/pi-pocket/src/server/extensions/`).
+It is on by default and can be turned off — or back on — in Menu → Extensions.
+
+It calls the **search model's own provider API** rather than scraping: Google Gemini grounding,
+OpenAI/Codex Responses, xAI Grok, Anthropic, DeepSeek, Ollama Cloud and OpenCode Zen/Go. Which
+model does the searching is the install's choice, taken from `~/.pi/agent/web-search.json` in the
+workspace home:
+
+```json
+{ "provider": "opencode-go", "model": "muse-spark-1.3-contributor" }
+```
+
+With no such file the tool picks the highest-ranked available model from an allow-list of
+providers whose wire format it implements. An OpenAI-compatible gateway (OpenRouter, for one) is
+not picked automatically even when it advertises a supported api, because it does not implement
+that provider's search tool; name one explicitly to use it.
+
+Costs and access: a search is a **billable model call on the install's own provider credentials**
+(the same `auth.json` the agent uses), and the result text is then sent to the model the
+conversation uses. Nothing is fetched from a search provider that the install has no credentials
+for, and no search runs unless the agent calls the tool. Details, verification and the vendored
+upstream source: [`extensions/web-search/`](extensions/web-search/README.md).
+
 ## Development tools and cluster access
 
 See `images/README.md` for exact bundled versions, package sources and nested Podman limitations. The image integrates tools rather than mounting another image: an image-volume containing `/usr/bin` cannot supply its dependencies, interpreter paths and dynamic libraries safely by simply extending `PATH`.

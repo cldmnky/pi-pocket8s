@@ -17,7 +17,8 @@ test:
 	$(PYTHON) tests/test_chart.py
 	cd portal && go test -race ./...
 	cd terminal && go test -race ./...
-	@if ls images/*.test.mjs >/dev/null 2>&1; then node --test images/*.test.mjs; fi
+	@shopt -s nullglob; tests=(images/*.test.mjs extensions/*.test.mjs); \
+	if [ $${#tests[@]} -gt 0 ]; then node --test "$${tests[@]}"; fi
 
 dry-run:
 	helm template $(RELEASE) charts/pi-pocket -n $(NAMESPACE) -f $(VALUES) | kubectl apply --dry-run=server -n $(NAMESPACE) -f -

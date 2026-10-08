@@ -1,0 +1,81 @@
+# web-search
+
+The agent's `web_search` tool, shipped inside the pi-pocket image as a Pi Pocket
+**built-in extension**: `images/Containerfile` installs this directory as
+`src/server/extensions/web-search.ts` plus `src/server/extensions/web-search/`
+in the application, where Pi Pocket's extension loader finds it and loads it by
+default. It needs no PVC file and no enabling, and the owner can turn it off (or
+back on) in Menu → Extensions like any other module.
+
+A search runs through the **model provider's own search API**, not a scraper:
+Google Gemini grounding (and URL Context), OpenAI and Codex Responses, xAI Grok,
+Anthropic, DeepSeek, Ollama Cloud, OpenCode Zen/Go.
+
+| File | What it is |
+| --- | --- |
+| `web-search.ts` | The module the loader imports: one `web_search` tool. |
+| `web-search/select.ts` | Which model a search runs on when the install has not named one. |
+| `web-search/model.ts` | Pi's model runtime, and the context shim the vendored code expects. |
+| `web-search/vendor/` | pi-web-search 1.7.0, unmodified — see `NOTICE.md`. |
+| `web-search.test.mjs` | Unit test for the picker. `make test` runs it. |
+
+Two layers exist because pi-web-search is a **Pi** extension (`pi.registerTool`,
+pi-tui rendering) and Pi Pocket loads **Pi Durable** extensions
+(`defineExtension`/`defineTool`). `pi install npm:pi-web-search` cannot reach the
+agent inside this image: nothing in Pi Pocket reads Pi's `settings.json`
+packages. The port replaces only the entry point; the provider code is reused
+unmodified, so it can be diffed against a later release.
+
+## Choosing the search model
+
+`~/.pi/agent/web-search.json` — the same file and format the upstream package
+uses — wins when it exists:
+
+```json
+{ "provider": "opencode-go", "model": "muse-spark-1.3-contributor" }
+```
+
+Without it, the tool picks the highest-ranked *available* model from an
+allow-list of providers whose wire format the vendored code implements
+(`select.ts`). An OpenAI-compatible gateway is deliberately **not** picked on its
+own: OpenRouter answers with Anthropic's and OpenAI's shapes without implementing
+either provider's search tool, so it must be named explicitly. The fallback is a
+guess; pin the model you want.
+
+Costs, from the operator's account: a search is a model call on the search
+provider, and the result text then goes to the model the conversation is using.
+Each search is bounded at 180 seconds.
+
+## Refreshing the vendored code
+
+```bash
+npm pack pi-web-search@<version>          # or clone the repository
+tar xzf pi-web-search-*.tgz
+cp -a package/src/. extensions/web-search/vendor/
+# drop the package's own index.ts again: it is Pi's entry point, not Pi Pocket's
+```
+
+Then re-check `NOTICE.md`, re-run `make test`, and build the image
+(`make image`) — the Containerfile fails the build if the module no longer loads
+or stops installing its tool.
+
+## Verifying by hand
+
+Inside a running image:
+
+```bash
+node --input-type=module -e '
+  const { default: create } = await import("/opt/pi-pocket/src/server/extensions/web-search.ts");
+  const extension = create({ notice() {} });
+  console.log(extension.name, extension.tools.map((tool) => tool.name).join(","));
+'
+```
+
+A real search is a billable model call; run one from a conversation, or check
+Menu → Extensions for the module and its error state.
+
+## Known rough edge
+
+Inline citation markers can land mid-word in the answer text (`th[1]e`). That is
+the vendored formatter placing provider citation offsets, not the adapter; the
+source list at the end of the result is unaffected.

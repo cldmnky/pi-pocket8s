@@ -238,6 +238,28 @@ RUN set -eux; \
     test -d node_modules/jiti; \
     chown -R 1000:1000 /opt/pi-pocket
 
+# Agent web search: shipped as a Pi Pocket built-in extension, so it loads from the
+# application's own extensions folder (visible in Menu → Extensions, where the owner can
+# also turn it off). The module file and its helper folder keep their repository names, so
+# nothing is rewritten on the way in; the loader finds any top-level *.ts it was not given
+# an order for. Searches run on a provider the install already has credentials for, and are
+# billable model calls: see extensions/web-search/README.md.
+COPY --chown=1000:1000 extensions/web-search.ts /opt/pi-pocket/src/server/extensions/web-search.ts
+COPY --chown=1000:1000 extensions/web-search/ /opt/pi-pocket/src/server/extensions/web-search/
+
+# Fail the build if the extension stops loading or stops installing its tool. `node` runs the
+# TypeScript as it is; the module imports only what the image already has.
+RUN set -eux; \
+    cd /opt/pi-pocket; \
+    test -f src/server/extensions/web-search/vendor/providers/openai.ts; \
+    node --input-type=module -e ' \
+        const { default: createWebSearch } = await import("/opt/pi-pocket/src/server/extensions/web-search.ts"); \
+        const extension = createWebSearch({ notice() {} }); \
+        if (extension.name !== "pocket-web-search") throw new Error("unexpected extension name: " + extension.name); \
+        if (extension.tools?.[0]?.name !== "web_search") throw new Error("the web_search tool was not installed"); \
+        console.log("web-search extension ok:", extension.tools.map((tool) => tool.name).join(",")); \
+    '
+
 COPY images/github-credentials.mjs /usr/local/bin/gh
 RUN chmod 0755 /usr/local/bin/gh
 COPY --from=terminal-build /out/pi-terminal /usr/local/bin/pi-terminal
