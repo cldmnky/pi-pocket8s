@@ -39,6 +39,7 @@ verified against the vendor's published SHA-256; RPMS are GPG-verified by `dnf`.
 | SCM/SSH | `git`, `openssh`, `openssh-clients`, `known_hosts`/`authorized_keys` from the runtime secret |
 | Containers | `podman`, `buildah`, `skopeo`, with `/etc/containers/storage.conf` defaulting to the `vfs` driver (no `/dev/fuse`, no host devices) |
 | Kubernetes | pinned `kubectl` v1.35.6 (matches the 1.35 cluster; newer clients break skew policy), `oc` 4.22.17, `helm` v4.3.0, each checksum-verified |
+| GitHub | `gh` CLI v2.102.0 (checksum-verified) at `/usr/local/libexec/gh`; `/usr/local/bin/gh` is a wrapper (`images/github-credentials.mjs`) that fetches a short-lived, repository-scoped GitHub App installation token from the credential broker per command, and doubles as a Git credential helper (`gh --git`) for `https://github.com` — tokens are never stored on disk or put in remote URLs. Active when `GITHUB_BROKER_URL` is set (the chart sets it in GitHub App mode) |
 | Browser | Chrome-for-Testing `chrome-headless-shell` (pinned Stable, both arches) at `/usr/local/bin/chromium`; `PI_POCKET_BROWSER`/`PI_POCKET_BROWSER_ARGS=--no-sandbox` are preset, `--no-sandbox` is required inside user namespaces |
 | Everyday tools | `ripgrep` (v15.2.0, checksum-verified), `jq`, `curl`, `tar`, `unzip`, `xz`, `rsync`, `procps-ng` (`ps`, `top`), `vim`, `less`, `file`, `diffutils` |
 | Log safety | `images/log-filter.mjs` (`pi-pocket-log-filter`): runs the launcher, redacts the owner sign-in token and QR block from the container log, forwards signals, passes errors through |
@@ -177,6 +178,8 @@ are never written to the secret — only this one URL.
 | `authorized_keys` | copied to `~/.ssh/authorized_keys` (0600) as configuration for tooling |
 | `known_hosts` | copied to `~/.ssh/known_hosts` (0600) |
 | `id_ed25519` | optional outbound SSH key, copied to `~/.ssh/id_ed25519` (0600) |
+
+When `GITHUB_BROKER_URL` is set, personal `GH_TOKEN`/`GITHUB_TOKEN` are dropped and Git operations at `https://github.com` resolve credentials through `/usr/local/bin/gh --git` (a `git credential` helper speaking the broker protocol). The wrapper refuses non-github.com hosts, absolute `gh api` URLs, and repositories outside the broker's allow-list; `useHttpPath` keeps per-repo scoping exact.
 
 Allowlisted `api-keys.json` names: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
 `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`,

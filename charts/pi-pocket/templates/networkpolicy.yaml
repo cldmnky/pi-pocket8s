@@ -18,4 +18,24 @@ spec:
         - {protocol: TCP, port: 8787}
         - {protocol: TCP, port: 8080}
 # Egress intentionally allowed: code tools need Git, package registries, LLMs and K8s.
+{{- if and .Values.portal.enabled (ne (include "pocket.portalNamespace" .) .Release.Namespace) }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "pocket.fullname" . }}-portal-ingress
+  namespace: {{ include "pocket.portalNamespace" . }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: portal
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.ingressNamespaceSelector | nindent 12 }}
+      ports: [{protocol: TCP, port: 8080}]
+# Broker uses the HTTPS portal ingress, not plaintext cross-namespace traffic.
+{{- end }}
 {{- end }}

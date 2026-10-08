@@ -11,7 +11,7 @@ func setEnv(t *testing.T, values map[string]string) {
 	t.Helper()
 	for _, key := range []string{
 		"POD_NAMESPACE", "POCKET_DEPLOYMENT", "CONFIG_SECRET",
-		"POCKET_URL", "PORTAL_ORIGIN", "PORTAL_TOKEN_FILE",
+		"POCKET_URL", "PORTAL_ORIGIN", "PORTAL_TOKEN_FILE", "POCKET_NAMESPACE", "PORTAL_AUTH_MODE", "POCKET_SERVICE_ACCOUNT", "GITHUB_CLIENT_ID", "GITHUB_APP_ID", "GITHUB_INSTALLATION_ID", "GITHUB_ORGANIZATION", "GITHUB_TEAM", "GITHUB_REPOSITORIES", "GITHUB_CLIENT_SECRET", "GITHUB_CLIENT_SECRET_FILE", "GITHUB_APP_PRIVATE_KEY_FILE",
 	} {
 		value := values[key]
 		t.Setenv(key, value)
@@ -42,6 +42,37 @@ func TestFromEnvValid(t *testing.T) {
 	}
 	if cfg.PortalOrigin != "https://portal.example.com" {
 		t.Errorf("PortalOrigin = %q", cfg.PortalOrigin)
+	}
+}
+
+func TestGitHubAutoDetectionAndFailClosed(t *testing.T) {
+	env := validEnv()
+	setEnv(t, env)
+	cfg, err := config.FromEnv()
+	if err != nil || cfg.AuthMode != "token" {
+		t.Fatalf("legacy mode: %s %v", cfg.AuthMode, err)
+	}
+	t.Setenv("GITHUB_CLIENT_ID", "client")
+	if _, err = config.FromEnv(); err == nil {
+		t.Error("partial GitHub configuration fell back to token")
+	}
+	env["POD_NAMESPACE"] = "management"
+	env["POCKET_NAMESPACE"] = "workspace"
+	env["POCKET_SERVICE_ACCOUNT"] = "pi-pocket"
+	env["GITHUB_CLIENT_ID"] = "client"
+	env["GITHUB_APP_ID"] = "123"
+	env["GITHUB_INSTALLATION_ID"] = "456"
+	env["GITHUB_ORGANIZATION"] = "example"
+	env["GITHUB_REPOSITORIES"] = "example/repo"
+	env["GITHUB_CLIENT_SECRET"] = "test-client-secret"
+	setEnv(t, env)
+	cfg, err = config.FromEnv()
+	if err != nil || cfg.AuthMode != "github" || cfg.Namespace != "workspace" || cfg.PortalNamespace != "management" {
+		t.Fatalf("auto GitHub mode: %+v %v", cfg, err)
+	}
+	t.Setenv("POD_NAMESPACE", "workspace")
+	if _, err = config.FromEnv(); err == nil {
+		t.Error("GitHub private key allowed in admin-enabled workspace namespace")
 	}
 }
 

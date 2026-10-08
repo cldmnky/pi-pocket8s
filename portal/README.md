@@ -19,11 +19,40 @@ portal's own CSP permits `frame-src` for the configured agent origin only.
 
 ## Security model
 
-- **Bearer token only.** Every `/api` request is checked in constant time
+- **Two authentication modes.**
+
+  **Token mode (default).** Every `/api` request is checked in constant time
   against `PORTAL_TOKEN_FILE` (default `/run/portal/token`). The file is
   re-read on every request so projected-Secret rotation needs no restart.
   A missing, empty, or weak token fails closed: startup aborts and requests
   return `503`.
+
+  **GitHub mode** (activated when `GITHUB_CLIENT_ID` is set, or
+  `PORTAL_AUTH_MODE=github`). The browser signs in through a GitHub App web
+  flow (`state` + PKCE S256, callback `PORTAL_ORIGIN/auth/github/callback`).
+  After the code exchange the user identity comes from `GET /user`, and access
+  is granted only to **active** members of `GITHUB_ORGANIZATION` (or
+  `GITHUB_TEAM` when set), verified with the App's `members: read`
+  installation token. The GitHub user/refresh tokens are discarded at once;
+  sessions are opaque random `__Host-` cookies (Secure, HttpOnly, SameSite
+  Lax) held only in server memory and re-validated against membership at
+  least every 5 minutes (a required re-check that fails means access fails).
+  Bearer-token login is **disabled** in this mode; cookie mutations require a
+  matching `Origin`, so there is no cookie-free bypass. GitHub mode also
+  enables the credential broker (see below) and requires the portal to run in
+  a different namespace from the agent's (`POCKET_NAMESPACE` names that
+  workspace namespace; startup refuses same-namespace GitHub mode because the
+  App private key must not be readable by the namespace-admin agent).
+
+  **Credential broker (`POST /api/github/credentials`).** Called by the
+  workspace pod, not by browsers: the caller presents its own projected
+  service-account token with the `pi-pocket-github` audience, verified via a
+  Kubernetes `TokenReview` that accepts only the configured namespace and
+  service account. The response is a one-hour GitHub App installation token,
+  scoped to one allow-listed repository with `contents: write`,
+  `pull_requests: write`, and `actions: write` (never `workflows` or
+  `administration`). Tokens are cached until five minutes before expiry and
+  renewed transparently.
 - **TLS-verified Kubernetes API.** The server talks to the in-cluster API
   server using `KUBERNETES_SERVICE_HOST`/`KUBERNETES_SERVICE_PORT`, verifies
   the server certificate against the projected CA bundle, and re-reads the
@@ -39,10 +68,13 @@ portal's own CSP permits `frame-src` for the configured agent origin only.
   the response is only a success after the API server stored the patch.
 - **Mutation hardening.** Portal responses set CSP (`default-src 'none'`),
   `Cache-Control: no-store`, `nosniff`, and frame denial. Mutation requests
-  with an `Origin` header must match `PORTAL_ORIGIN`; without an Origin header
-  (curl, tests) the bearer token alone authorizes. Cookies are never used.
-  Request bodies are limited to 1 MiB, writes are validated and bounded, and
-  upstream Kubernetes errors are logged, never echoed to the browser.
+  with an `Origin` header must match `PORTAL_ORIGIN`; in token mode a missing
+  Origin header (curl, tests) is authorized by the bearer token alone; in
+  GitHub mode cookie mutations require the Origin and no bearer-token path
+  exists. Request bodies are limited to 1 MiB, writes are validated and
+  bounded, and upstream GitHub/Kubernetes errors are logged, never echoed to
+  the browser (GitHub denials are a generic message; credentials never appear
+  in errors or logs).
 - **No private keys.** The API rejects SSH private key material and only
   accepts public keys parsed with `golang.org/x/crypto/ssh`. `known_hosts` is
   stored as text and is never executed or interpolated into a shell.
@@ -56,7 +88,15 @@ portal's own CSP permits `frame-src` for the configured agent origin only.
 | `CONFIG_SECRET` | yes | Name of the existing runtime Secret the chart created. |
 | `POCKET_URL` | yes | Public `https` URL of the agent, shown as a link in the SPA. |
 | `PORTAL_ORIGIN` | yes | `https` origin of the portal; mutations must match it. |
-| `PORTAL_TOKEN_FILE` | no | Token file path, default `/run/portal/token`. |
+| `PORTAL_TOKEN_FILE` | no | Token file path, default `/run/portal/token` (ignored in GitHub mode). |
+| `POCKET_NAMESPACE` | no | Workspace namespace when the portal runs in a separate management namespace (required in GitHub mode). |
+| `PORTAL_AUTH_MODE` | no | `auto` (default), `token`, or `github`; `auto` selects GitHub when `GITHUB_CLIENT_ID` is set. |
+| `POCKET_SERVICE_ACCOUNT` | GitHub mode | Workspace service account accepted by the credential broker. |
+| `GITHUB_APP_ID` / `GITHUB_INSTALLATION_ID` | GitHub mode | Numeric GitHub App and installation IDs. |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub mode | App OAuth client credentials (secret from env or `/run/github-app/client-secret`). |
+| `GITHUB_APP_PRIVATE_KEY_FILE` | no | App private key path, default `/run/github-app/private-key.pem`. |
+| `GITHUB_ORGANIZATION` / `GITHUB_TEAM` | GitHub mode | Membership gate; team optional. |
+| `GITHUB_REPOSITORIES` | GitHub mode | Comma-separated `org/name` allow-list for bot tokens. |
 
 `PORTAL_ORIGIN` is canonicalized (lower-case host, default `:443` removed) so
 browser `Origin` headers match exactly.
@@ -86,6 +126,11 @@ preserved on write.
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
 | `GET` | `/healthz` | none | Liveness probe. |
+| `GET` | `/auth/session` | none | Reports `{mode, authenticated, login}` for the SPA. |
+| `GET` | `/auth/github/start` → callback | none | GitHub App web-flow entry (GitHub mode). |
+| `POST` | `/auth/logout` | session + Origin | Clears the portal session (GitHub mode). |
+| `GET` | `/api/github/status` | session | Bot identity, organization/team, and allow-listed repositories (GitHub mode). |
+| `POST` | `/api/github/credentials` | workspace SA token (`pi-pocket-github` audience) | One-hour, repository-scoped App installation token (GitHub mode). |
 | `GET` | `/` | none | Embedded SPA. |
 | `GET` | `/api/config` | bearer | Redacted config: `resourceVersion`, `allowedApiKeys`, `apiKeys` (name → set), `authorizedKeys`, `knownHosts`, `pocketUrl`, `ownerLoginUrl` (empty until the agent syncs it). |
 | `POST` | `/api/config` | bearer | Partial update, see below. |

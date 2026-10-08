@@ -18,6 +18,7 @@ import (
 
 	"github.com/cldmnky/pi-pocket8s/portal/internal/auth"
 	"github.com/cldmnky/pi-pocket8s/portal/internal/config"
+	"github.com/cldmnky/pi-pocket8s/portal/internal/githubauth"
 	"github.com/cldmnky/pi-pocket8s/portal/internal/kube"
 )
 
@@ -26,10 +27,12 @@ const requestTimeout = 20 * time.Second
 
 // Server serves the portal API and the static SPA.
 type Server struct {
-	cfg    config.Config
-	kube   *kube.Client
-	log    *slog.Logger
-	static fs.FS
+	cfg      config.Config
+	kube     *kube.Client
+	log      *slog.Logger
+	static   fs.FS
+	github   GitHubProvider
+	sessions *githubauth.Auth
 }
 
 // New builds a portal server. static must expose index.html, app.js, and
@@ -46,6 +49,14 @@ func New(cfg config.Config, kubeClient *kube.Client, logger *slog.Logger, static
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /auth/session", s.handleSession)
+	mux.Handle("GET /api/github/status", s.api(s.handleGitHubStatus))
+	if s.sessions != nil {
+		mux.HandleFunc("GET /auth/github/start", s.sessions.Start)
+		mux.HandleFunc("GET /auth/github/callback", s.sessions.Callback)
+		mux.HandleFunc("POST /auth/logout", s.sessions.Logout)
+		mux.HandleFunc("POST /api/github/credentials", s.handleGitHubCredentials)
+	}
 	mux.Handle("GET /api/config", s.api(s.handleGetConfig))
 	mux.Handle("POST /api/config", s.api(s.handlePostConfig))
 	mux.Handle("GET /api/status", s.api(s.handleStatus))
@@ -67,8 +78,22 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 // the per-request timeout.
 func (s *Server) api(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && !s.originAllowed(r.Header.Get("Origin")) {
+		if r.Method == http.MethodPost && (!s.originAllowed(r.Header.Get("Origin")) || (s.sessions != nil && r.Header.Get("Origin") == "")) {
 			writeError(w, http.StatusForbidden, "request origin is not allowed")
+			return
+		}
+		if s.cfg.AuthMode == "github" {
+			if s.sessions == nil {
+				writeError(w, http.StatusServiceUnavailable, "GitHub authentication unavailable")
+				return
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+			defer cancel()
+			if _, err := s.sessions.Authorize(r.WithContext(ctx)); err != nil {
+				writeError(w, http.StatusUnauthorized, "GitHub session denied or unavailable")
+				return
+			}
+			next(w, r.WithContext(ctx))
 			return
 		}
 		switch err := auth.Check(r, s.cfg.TokenFile); {

@@ -31,6 +31,19 @@ runtimeSecret:
   existingSecret: ""
 portal:
   enabled: true
+  # GitHub mode REQUIRES a different, pre-created management namespace.
+  # Empty keeps the existing single-namespace token-auth installation.
+  namespace: ""
+  authMode: auto # GitHub when github.clientID is set; token otherwise
+  github:
+    appID: ""
+    clientID: ""
+    installationID: ""
+    organization: ""
+    team: "" # empty allows all active organization members
+    repositories: [] # explicit organization/name list, no wildcards
+    existingSecret: "" # management namespace: client-secret + private-key.pem
+    brokerCASecret: "" # optional workspace namespace Secret: ca.crt
   image:
     repository: quay.io/cldmnky/pi-pocket-portal
     tag: latest

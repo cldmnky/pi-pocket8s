@@ -287,6 +287,14 @@ if [ -n "${POCKET_FRAME_ANCESTORS:-}" ] && [ -x /usr/local/bin/pi-pocket-embed-p
     /usr/local/bin/pi-pocket-embed-patch || warn "continuing without embedded portal support"
 fi
 load_api_keys
+if [ -n "${GITHUB_BROKER_URL:-}" ]; then
+    # No tokens in URLs/config files; Git asks the helper for current credentials
+    # for each repository (including clones), and gh uses the broker per command.
+    unset GH_TOKEN GITHUB_TOKEN
+    git config --global credential.https://github.com.useHttpPath true
+    git config --global --replace-all credential.https://github.com.helper ''
+    git config --global --add credential.https://github.com.helper '/usr/local/bin/gh --git'
+fi
 install_ssh_file authorized_keys 0600
 install_ssh_file known_hosts 0600
 install_ssh_file id_ed25519 0600

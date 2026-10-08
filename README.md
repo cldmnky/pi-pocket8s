@@ -31,6 +31,39 @@ helm upgrade pi-pocket charts/pi-pocket -n pi-pocket \
 
 The portal always uses `restricted-v3`, a read-only root filesystem, no extra capabilities, and a Role restricted to the pocket Deployment and runtime Secret. Its token is a separate administrative credential, not a pi-pocket invite. The SPA keeps the entered token in memory only; keys are never returned by the API. Use HTTPS, a trusted device, and an appropriately secured cluster/etcd.
 
+## Optional: GitHub App authentication for the portal
+
+By default the portal asks for a shared portal token. When `portal.github.clientID` is set (or `portal.authMode=github`), the portal switches to **GitHub App sign-in** instead, and token login is disabled entirely: the SPA replaces the token form with "Sign in with GitHub", and API bearer tokens are rejected.
+
+What you get:
+
+- **Who signs in**: only active members of a GitHub organization, or of one team (`portal.github.team`). Membership is verified server-side against `GET /orgs/{org}/teams/{team}/memberships/{user}` at login and re-checked at least every 5 minutes; removed members lose access without waiting for session expiry. Login uses the GitHub App web flow with `state` plus PKCE (S256). GitHub user tokens are used only to identify the user and are then discarded; sessions are opaque random cookies (`__Host-`, Secure, HttpOnly), kept in portal memory only (the portal runs with `Recreate`, so upgrades sign everyone out).
+- **What the agent gets**: a separate **GitHub App bot identity**. The portal mints one-hour **installation tokens** scoped to one explicitly allow-listed repository per request, with `contents: write`, `pull_requests: write`, `actions: write` — enough for clone/push, PRs, and triggering/inspecting workflow runs. `workflows` and `administration` permissions are deliberately never granted, so workflow files under `.github/workflows` cannot be edited through the API (note: the agent could still edit build scripts that workflows execute; this is not a CI sandbox).
+- **How the agent authenticates**: the workspace pod never sees the App private key. It projects its own service-account token with the dedicated `pi-pocket-github` audience and calls the portal's broker endpoint, which verifies it with a `TokenReview` (accepting only the configured workspace namespace/service account) and returns a bot token. In the image, `gh` is a wrapper that fetches a fresh token per command, and a Git credential helper does the same for HTTPS clones/pushes — tokens are never stored on disk or embedded in remote URLs, and they survive neither pod restarts nor lingering in configuration. The App private key and client secret stay in the portal's own secret.
+- **Namespace boundary (required)**: GitHub mode requires `portal.namespace` — a **separate, pre-created management namespace**. The workspace namespace's `admin` service account could read any Secret in its own namespace, so the App key must not live there. The chart creates the portal's ServiceAccount in the management namespace, binds its existing namespace-scoped Role in the workspace namespace to that identity, and grants only `tokenreviews create` (cluster-scoped, reveals nothing by itself). The chart will refuse to render GitHub mode with `portal.namespace` equal to the release namespace.
+
+Setup:
+
+1. Register a **GitHub App** (organization-owned). Homepage `https://<portalHost>`, callback `https://<portalHost>/auth/github/callback` (exact match), uncheck webhook (none are used), enable "Request user authorization (OAuth) during installation" if you want per-user authorization prompts.
+2. Repository permissions: Contents **Read and write**, Pull requests **Read and write**, Actions **Read and write**. Organization permission: Members **Read-only** (for team checks). Nothing else.
+3. Install the App on the target organization, granting access only to the allow-listed repositories. Note the **installation ID** (`GET /orgs/{org}/installation` with a JWT, or from the App settings page URL).
+4. Create the App credentials Secret in the management namespace: `client-secret` (the App's client secret) and `private-key.pem` (a generated App private key, RS256).
+5. Create the management namespace, then install/upgrade with:
+
+```bash
+helm upgrade --install pi-pocket charts/pi-pocket -n workspace -f deploy/openshift-values.yaml \
+  --set portal.namespace=management \
+  --set portal.github.clientID=Iv1.xxxxxxxx \
+  --set portal.github.appID=123456 \
+  --set portal.github.installationID=789012 \
+  --set portal.github.organization=your-org \
+  --set portal.github.team=optional-team \
+  --set 'portal.github.repositories[0]=your-org/one-repo' \
+  --set portal.github.existingSecret=pi-pocket-github-app
+```
+
+The first sign-in must be performed by an organization owner (to approve the App authorization if prompted). Every subsequent sign-in requires active team/organization membership. Because anyone admitted can still steer the shared agent and its namespace-admin rights, only invite teams you would trust at the workspace keyboard; this does not isolate users from each other. Non-GitHub prerequisites (provider keys, SSH keys, Quay) are unchanged.
+
 ## Build and publish locally
 
 A Quay account able to create repositories in `cldmnky` is required for the first push. Afterward grant the CI robot write access to **both** repositories.

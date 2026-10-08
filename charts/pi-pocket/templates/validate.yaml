@@ -1,3 +1,19 @@
+{{- if not (has .Values.portal.authMode (list "auto" "token" "github")) -}}
+{{- fail "portal.authMode must be auto, token or github" -}}
+{{- end -}}
+{{- if include "pocket.githubEnabled" . -}}
+{{- if or (not .Values.portal.enabled) (not .Values.ingress.enabled) (eq (include "pocket.portalNamespace" .) .Release.Namespace) -}}
+{{- fail "GitHub mode requires an enabled HTTPS portal in a separate management namespace" -}}
+{{- end -}}
+{{- range $key := list "appID" "clientID" "installationID" "organization" "existingSecret" -}}
+{{- if empty (index $.Values.portal.github $key) -}}{{- fail (printf "portal.github.%s is required" $key) -}}{{- end -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-zA-Z0-9][a-zA-Z0-9-]*$" .Values.portal.github.organization) -}}{{- fail "invalid GitHub organization" -}}{{- end -}}
+{{- if empty .Values.portal.github.repositories -}}{{- fail "portal.github.repositories must explicitly select repositories" -}}{{- end -}}
+{{- range .Values.portal.github.repositories -}}
+{{- if not (regexMatch (printf "(?i)^%s/[a-z0-9][a-z0-9_.-]*$" $.Values.portal.github.organization) .) -}}{{- fail "GitHub repositories must belong to the configured organization" -}}{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- if not (has (int .Values.replicas) (list 0 1)) -}}
 {{- fail "replicas must be 0 or 1: pi-pocket uses a single-writer SQLite database" -}}
 {{- end -}}

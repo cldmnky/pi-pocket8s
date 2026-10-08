@@ -6,7 +6,10 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
+
+	"github.com/cldmnky/pi-pocket8s/portal/internal/githubapp"
 )
 
 const (
@@ -18,12 +21,16 @@ const (
 
 // Config is the validated portal configuration.
 type Config struct {
-	Namespace    string
-	Deployment   string
-	ConfigSecret string
-	PocketURL    string
-	PortalOrigin string
-	TokenFile    string
+	Namespace               string
+	PortalNamespace         string
+	Deployment              string
+	ConfigSecret            string
+	PocketURL               string
+	PortalOrigin            string
+	TokenFile               string
+	AuthMode                string
+	WorkspaceServiceAccount string
+	GitHub                  githubapp.Options
 }
 
 var dnsLabelRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -38,6 +45,45 @@ func FromEnv() (Config, error) {
 		PortalOrigin: strings.TrimSpace(os.Getenv("PORTAL_ORIGIN")),
 		TokenFile:    strings.TrimSpace(os.Getenv("PORTAL_TOKEN_FILE")),
 	}
+	cfg.PortalNamespace = cfg.Namespace
+	if namespace := strings.TrimSpace(os.Getenv("POCKET_NAMESPACE")); namespace != "" {
+		cfg.Namespace = namespace
+	}
+	cfg.AuthMode = strings.TrimSpace(os.Getenv("PORTAL_AUTH_MODE"))
+	if cfg.AuthMode == "" || cfg.AuthMode == "auto" {
+		cfg.AuthMode = "token"
+		if os.Getenv("GITHUB_CLIENT_ID") != "" {
+			cfg.AuthMode = "github"
+		}
+	}
+	cfg.WorkspaceServiceAccount = strings.TrimSpace(os.Getenv("POCKET_SERVICE_ACCOUNT"))
+	if cfg.AuthMode == "github" {
+		appID, err := strconv.ParseInt(os.Getenv("GITHUB_APP_ID"), 10, 64)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid GITHUB_APP_ID")
+		}
+		installationID, err := strconv.ParseInt(os.Getenv("GITHUB_INSTALLATION_ID"), 10, 64)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid GITHUB_INSTALLATION_ID")
+		}
+		clientSecretFile := os.Getenv("GITHUB_CLIENT_SECRET_FILE")
+		if clientSecretFile == "" {
+			clientSecretFile = "/run/github-app/client-secret"
+		}
+		privateKeyFile := os.Getenv("GITHUB_APP_PRIVATE_KEY_FILE")
+		if privateKeyFile == "" {
+			privateKeyFile = "/run/github-app/private-key.pem"
+		}
+		secret := []byte(os.Getenv("GITHUB_CLIENT_SECRET"))
+		if len(secret) == 0 {
+			var err error
+			secret, err = os.ReadFile(clientSecretFile)
+			if err != nil {
+				return Config{}, fmt.Errorf("cannot read GitHub client secret")
+			}
+		}
+		cfg.GitHub = githubapp.Options{AppID: appID, InstallationID: installationID, ClientID: os.Getenv("GITHUB_CLIENT_ID"), ClientSecret: strings.TrimSpace(string(secret)), PrivateKeyFile: privateKeyFile, Organization: os.Getenv("GITHUB_ORGANIZATION"), Team: os.Getenv("GITHUB_TEAM"), Repositories: strings.FieldsFunc(os.Getenv("GITHUB_REPOSITORIES"), func(r rune) bool { return r == ',' })}
+	}
 	if cfg.TokenFile == "" {
 		cfg.TokenFile = DefaultTokenFile
 	}
@@ -49,6 +95,15 @@ func FromEnv() (Config, error) {
 
 // Validate reports whether the configuration is safe to serve with.
 func (c *Config) Validate() error {
+	if c.AuthMode != "" && c.AuthMode != "token" && c.AuthMode != "github" {
+		return fmt.Errorf("PORTAL_AUTH_MODE must be token or github")
+	}
+	if c.AuthMode == "github" && (!isDNSSubdomain(c.WorkspaceServiceAccount) || c.GitHub.AppID <= 0 || c.GitHub.InstallationID <= 0 || c.GitHub.Organization == "" || len(c.GitHub.Repositories) == 0) {
+		return fmt.Errorf("GitHub authentication requires app, installation, organization, repositories and workspace service account")
+	}
+	if c.AuthMode == "github" && (!isDNSLabel(c.PortalNamespace) || c.PortalNamespace == c.Namespace) {
+		return fmt.Errorf("GitHub portal must run outside the workspace namespace")
+	}
 	if !isDNSLabel(c.Namespace) {
 		return fmt.Errorf("POD_NAMESPACE %q is not a valid Kubernetes namespace", c.Namespace)
 	}

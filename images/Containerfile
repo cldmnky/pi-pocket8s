@@ -44,6 +44,7 @@ ARG RIPGREP_VERSION=15.2.0
 ARG KUBECTL_VERSION=v1.35.6
 ARG HELM_VERSION=v4.3.0
 ARG OC_VERSION=4.22.17
+ARG GH_VERSION=2.102.0
 # Chrome for Testing, pinned Stable. CfT publishes no checksums, so the
 # version is pinned exactly and downloads use HTTPS from Google's bucket.
 ARG CHROME_VERSION=155.0.8059.39
@@ -165,6 +166,14 @@ RUN set -eux; \
     grep " ${oc_tar}\$" sha256sum.txt | sha256sum -c -; \
     tar -xzf "${oc_tar}" oc; \
     install -m 0755 oc /usr/local/bin/oc; \
+    gh_tar="gh_${GH_VERSION}_linux_${kube_arch}.tar.gz"; \
+    curl -fsSL --retry 5 -O "https://github.com/cli/cli/releases/download/v${GH_VERSION}/${gh_tar}"; \
+    curl -fsSL --retry 5 -o gh-checksums.txt "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_checksums.txt"; \
+    grep " ${gh_tar}\$" gh-checksums.txt | sha256sum -c -; \
+    tar -xzf "${gh_tar}"; \
+    mkdir -p /usr/local/libexec; \
+    install -m 0755 "gh_${GH_VERSION}_linux_${kube_arch}/bin/gh" /usr/local/libexec/gh; \
+    /usr/local/libexec/gh --version; \
     curl -fsSL --retry 5 --retry-delay 2 -o chrome-headless-shell.zip "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/${chrome_arch}/chrome-headless-shell-${chrome_arch}.zip"; \
     unzip -q chrome-headless-shell.zip -d /opt; \
     ln -sf "/opt/chrome-headless-shell-${chrome_arch}/chrome-headless-shell" /usr/local/bin/chromium; \
@@ -218,6 +227,8 @@ RUN set -eux; \
     test -d node_modules/jiti; \
     chown -R 1000:1000 /opt/pi-pocket
 
+COPY images/github-credentials.mjs /usr/local/bin/gh
+RUN chmod 0755 /usr/local/bin/gh
 COPY images/entrypoint.sh /usr/local/bin/pi-pocket-entrypoint
 COPY images/embed-patch.sh /usr/local/bin/pi-pocket-embed-patch
 COPY images/log-filter.mjs /usr/local/bin/pi-pocket-log-filter

@@ -10,8 +10,6 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ include "pocket.fullname" . }}-namespace
-  labels:
-    {{- include "pocket.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -27,8 +25,6 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ include "pocket.fullname" . }}-scc
-  labels:
-    {{- include "pocket.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -44,15 +40,16 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: {{ include "pocket.fullname" . }}-portal
+  namespace: {{ include "pocket.portalNamespace" . }}
   labels:
     {{- include "pocket.labels" . | nindent 4 }}
 ---
+# This Role remains in the WORKSPACE namespace. The management-namespace
+# portal identity gets only the named Secret and named Deployment operations.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: {{ include "pocket.fullname" . }}-portal
-  labels:
-    {{- include "pocket.labels" . | nindent 4 }}
 rules:
   - apiGroups: [""]
     resources: [secrets]
@@ -67,8 +64,6 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ include "pocket.fullname" . }}-portal
-  labels:
-    {{- include "pocket.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -76,15 +71,14 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: {{ include "pocket.fullname" . }}-portal
-    namespace: {{ .Release.Namespace }}
+    namespace: {{ include "pocket.portalNamespace" . }}
 {{- if and .Values.openshift.enabled .Values.openshift.bindSCC }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ include "pocket.fullname" . }}-portal-scc
-  labels:
-    {{- include "pocket.labels" . | nindent 4 }}
+  namespace: {{ include "pocket.portalNamespace" . }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -92,6 +86,32 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: {{ include "pocket.fullname" . }}-portal
-    namespace: {{ .Release.Namespace }}
+    namespace: {{ include "pocket.portalNamespace" . }}
+{{- end }}
+{{- if include "pocket.githubEnabled" . }}
+---
+# TokenReview is cluster-scoped, but grants no read/list access to any cluster
+# resource and no ability to mint service-account tokens.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Namespace }}-{{ include "pocket.fullname" . }}-github-tokenreview
+rules:
+  - apiGroups: [authentication.k8s.io]
+    resources: [tokenreviews]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Namespace }}-{{ include "pocket.fullname" . }}-github-tokenreview
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Namespace }}-{{ include "pocket.fullname" . }}-github-tokenreview
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "pocket.fullname" . }}-portal
+    namespace: {{ include "pocket.portalNamespace" . }}
 {{- end }}
 {{- end }}
