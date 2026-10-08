@@ -106,6 +106,32 @@ oc exec -n pi-pocket deploy/pi-pocket -- node --input-type=module -e \
 
 Treat that output like a password. Sign in once, then invite trusted collaborators through upstream pi-pocket. Do not scrape logs into a public dashboard: upstream may log sensitive session information. Provider API keys can be configured in the portal; upstream Pi provider OAuth logins can also be configured interactively and persist in the home directory.
 
+### Provider OAuth (browser) logins
+
+Interactive provider logins (e.g. OpenAI with a browser) start a `localhost`
+callback listener **inside the pod**, so the provider's redirect to
+`http://localhost:<port>/...` cannot reach your machine directly. Two ways
+through, both one-time (logins persist in the workspace home):
+
+1. **Port-forward the callback port** (smoothest). The agent prints the login
+   URL including its port — OpenAI Codex always uses `1455`. Forward it, then
+   complete the login in your local browser; the redirect lands in the pod:
+
+   ```bash
+   oc port-forward -n pi-pocket deploy/pi-pocket 1455:1455
+   ```
+
+   For providers with ephemeral ports, read the port from the printed URL and
+   forward that instead.
+
+2. **Paste the redirect URL.** The login flow also accepts the authorization
+   code / redirect URL pasted back into the agent chat. Complete the login in
+   your browser, and when it lands on an unreachable `localhost` address,
+   copy the full address-bar URL and paste it to the agent.
+
+No tunnel is needed for API-key providers: put the keys in the portal and
+restart instead.
+
 ### SSH
 
 Public keys from the portal are exposed as `~/.ssh/authorized_keys` for tools/configuration. **No SSH server is enabled**, and HTTP Ingress cannot provide SSH transport. For private Git repositories, public keys alone are not authentication: use agent credentials, a Git-provider token, or separately provision an `id_ed25519` private key in the runtime Secret. The portal intentionally refuses private keys. Set `known_hosts` using host keys whose fingerprints you verified independently, not blind trust-on-first-use. SSH strict host-key checking is enabled by the runtime image.
