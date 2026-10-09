@@ -146,3 +146,27 @@ requests, empty policy, changes visible without restart, revocation overriding
 cached credentials, malformed/unavailable policy, write conflicts, catalog
 pagination and installation owner validation. Helm 3.19 and Helm 4 rendering
 verify retained default-deny policy and management-only named-secret RBAC.
+
+## Why web_fetch is a plain read, not a provider tool (2026-10-09)
+
+`web_fetch` is a plain HTTP GET inside the extension — not the vendored package's
+`url_context`, and not a browser. The reasons, in order of weight:
+
+- Fetching a page is not a model call. It costs nothing, needs no credentials and
+  works whatever provider is configured for search, where `url_context` is
+  Gemini- or Ollama-only and answers with a model's summary rather than the page.
+- Reach is unchanged. The workspace pod can already fetch anything the tool can
+  (`curl` is in the image), so what the tool adds is a readable rendering, not
+  access. What it does add is bounded: http(s) only, at most 5 redirect hops
+  re-checked per hop, 30 s for the whole request, at most 5 MB read, and a cut at
+  a character boundary when the text meets the application's output limit. A URL
+  carrying `user:password@` is refused rather than sent.
+- The reduction is local and dependency-free: Node's own `fetch`, `TextDecoder`
+  and `Buffer`, with `web-search/fetch.ts` importing nothing, so `node --test`
+  covers the URL rules, HTML-to-text and the HTTP paths against a loopback server
+  with neither the application nor the internet.
+
+Non-text bodies (images, PDFs, archives) are reported by content type and size
+instead of returned: no decoding is claimed for a format the module does not
+understand. `robots.txt` is not consulted — this is the same GET the shell could
+make, and it identifies itself with a plain `pi-pocket-web-fetch` user agent.
