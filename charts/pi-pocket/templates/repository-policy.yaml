@@ -1,0 +1,46 @@
+{{- if include "pocket.githubEnabled" . }}
+{{- $name := printf "%s-github-repositories" (include "pocket.fullname" .) }}
+{{- $existing := lookup "v1" "Secret" (include "pocket.portalNamespace" .) $name }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  namespace: {{ include "pocket.portalNamespace" . }}
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+data:
+  {{- if $existing }}
+  {{- toYaml $existing.data | nindent 2 }}
+  {{- else }}
+  # Start with no repository access; organization owners select in the portal.
+  repositories.json: {{ "[]" | b64enc | quote }}
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ include "pocket.portalNamespace" . }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [{{ $name | quote }}]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ include "pocket.portalNamespace" . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "pocket.fullname" . }}-portal
+    namespace: {{ include "pocket.portalNamespace" . }}
+{{- end }}

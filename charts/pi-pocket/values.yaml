@@ -41,7 +41,9 @@ portal:
     installationID: "" # organization installation used for login membership checks
     organization: "" # login gate, independent of additional repository owners
     team: "" # empty allows all active organization members
-    repositories: [] # explicit owner/name list, no wildcards
+    # Repository permissions are selected in the portal, persisted in a retained
+    # management-namespace Secret. Old `repositories` Helm values are ignored.
+    # A fresh policy starts empty (denies all); only org owners can edit it.
     # Additional account owners (including personal accounts) -> installation IDs
     # of the SAME App. Empty preserves organization-only repository access.
     # Everyone who can steer the shared workspace can use these bot permissions.

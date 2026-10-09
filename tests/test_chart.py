@@ -151,8 +151,20 @@ class ChartTests(unittest.TestCase):
             render(*options, "--set", "portal.namespace=test-pocket")
         with self.assertRaises(subprocess.CalledProcessError):
             render(*options, "--set", "portal.github.existingSecret=")
-        with self.assertRaises(subprocess.CalledProcessError):
-            render(*options, "--set", "portal.github.repositories[0]=other/repo")
+        policy = find(docs, "Secret", "pi-pocket-github-repositories")
+        self.assertEqual(policy["metadata"]["namespace"], "management")
+        self.assertEqual(policy["metadata"]["annotations"]["helm.sh/resource-policy"], "keep")
+        self.assertEqual(policy["data"]["repositories.json"], "W10=")  # [] denies all
+        self.assertNotIn("GITHUB_REPOSITORIES", env)
+        self.assertEqual(env["GITHUB_REPOSITORY_POLICY_SECRET"], "pi-pocket-github-repositories")
+        role = find(docs, "Role", "pi-pocket-github-repositories")
+        self.assertEqual(role["metadata"]["namespace"], "management")
+        self.assertEqual(role["rules"], [{"apiGroups": [""], "resources": ["secrets"],
+                         "resourceNames": ["pi-pocket-github-repositories"], "verbs": ["get", "patch"]}])
+        self.assertEqual(find(docs, "RoleBinding", "pi-pocket-github-repositories")["subjects"][0]["name"], "pi-pocket-portal")
+        # Legacy Helm selections cannot grant workspace access or seed policy.
+        legacy = render(*options, "--set", "portal.github.repositories[0]=other/repo")
+        self.assertEqual(find(legacy, "Secret", "pi-pocket-github-repositories")["data"], policy["data"])
 
     def test_github_personal_repository_installation(self):
         options = ["--set", "portal.namespace=management", "--set", "portal.github.clientID=client",
@@ -168,10 +180,10 @@ class ChartTests(unittest.TestCase):
             self.assertEqual(env["GITHUB_ORGANIZATION"], "blahonga")
             self.assertEqual(env["GITHUB_TEAM"], "builders")
             self.assertEqual(env["GITHUB_INSTALLATION_ID"], "456")
-            self.assertEqual(env["GITHUB_REPOSITORIES"], "cldmnky/repo,blahonga/repo")
+            self.assertNotIn("GITHUB_REPOSITORIES", env)
+            self.assertEqual(env["GITHUB_REPOSITORY_POLICY_SECRET"], "pi-pocket-github-repositories")
             self.assertEqual(json.loads(env["GITHUB_REPOSITORY_INSTALLATIONS"]), {"cldmnky": 789})
         for extra in (
-            [],
             ["--set", "portal.github.repositoryInstallations.cldmnky=0"],
             ["--set", "portal.github.repositoryInstallations.cldmnky=-1"],
             ["--set-string", "portal.github.repositoryInstallations.cldmnky=1.5"],
@@ -183,9 +195,6 @@ class ChartTests(unittest.TestCase):
             ["--set", "portal.github.repositoryInstallations.blahonga=789"],
             ["--set", "portal.github.repositoryInstallations.bad/owner=789"],
             ["--set", "portal.github.repositoryInstallations=789"],
-            ["--set", "portal.github.repositoryInstallations.cldmnky=789", "--set", "portal.github.repositories[0]=other/repo"],
-            ["--set", "portal.github.repositoryInstallations.cldmnky=789", "--set", "portal.github.repositories[0]=cldmnky/*"],
-            ["--set", "portal.github.repositoryInstallations.cldmnky=789", "--set", "portal.github.repositories[0]=cldmnky/repo.git"],
         ):
             with self.subTest(extra=extra), self.assertRaises(subprocess.CalledProcessError):
                 render(*options, *extra)

@@ -230,14 +230,17 @@ are never written to the secret — only this one URL.
 | `known_hosts` | copied to `~/.ssh/known_hosts` (0600) |
 | `id_ed25519` | optional outbound SSH key, copied to `~/.ssh/id_ed25519` (0600) |
 
-When `GITHUB_BROKER_URL` is set, personal `GH_TOKEN`/`GITHUB_TOKEN` are dropped and Git operations at `https://github.com` resolve credentials through `/usr/local/bin/gh --git` (a `git credential` helper speaking the broker protocol). The wrapper refuses non-github.com hosts, absolute `gh api` URLs, and repositories outside the broker's allow-list; `useHttpPath` keeps per-repo scoping exact.
+When `GITHUB_BROKER_URL` is set, personal `GH_TOKEN`/`GITHUB_TOKEN` are dropped and Git operations at `https://github.com` resolve credentials through `/usr/local/bin/gh --git` (a `git credential` helper speaking the broker protocol). The wrapper refuses non-github.com hosts and absolute `gh api` URLs; the broker rejects repositories outside the portal-managed allowlist; `useHttpPath` keeps per-repo scoping exact.
 
 The broker may authorize personal-account repositories through a separate
 installation of the same GitHub App (`portal.github.repositoryInstallations`),
 independent of the organization used for portal login. No wrapper configuration
 change is needed: pass the full `owner/name` with `gh -R`, `gh repo clone`, or use
-the repository's GitHub remote. These remain shared bot credentials, not the
-signed-in user's personal token.
+the repository's GitHub remote. Select repositories in portal Configuration →
+GitHub App bot; the Helm repository list no longer grants access. The broker
+reads the management-namespace policy before every credential response, so
+selection changes need no container restart. These remain shared bot credentials,
+not the signed-in user's personal token.
 
 Allowlisted `api-keys.json` names: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
 `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`,

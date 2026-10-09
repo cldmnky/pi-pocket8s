@@ -15,8 +15,10 @@ type GitHubProvider interface {
 	githubauth.Provider
 	Organization() string
 	Team() string
-	Repositories() []string
-	RepositoryToken(context.Context, string) (githubapp.Token, error)
+	CheckOwner(context.Context, string) error
+	AvailableRepositories(context.Context) ([]string, error)
+	ValidateRepositories([]string) ([]string, error)
+	MintRepositoryToken(context.Context, string) (githubapp.Token, error)
 }
 
 // EnableGitHub switches the server to GitHub-only sessions. The bearer-token
@@ -39,7 +41,14 @@ func (s *Server) handleGitHubStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "identity": "GitHub App bot", "organization": s.github.Organization(), "team": s.github.Team(), "repositories": s.github.Repositories(), "permissions": map[string]string{"contents": "write", "pull_requests": "write", "actions": "write"}, "tokenLifetimeSeconds": 3600})
+	policy, err := s.repositoryPolicy(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "repository policy unavailable")
+		return
+	}
+	user, err := s.sessions.Authorize(r)
+	canManage := err == nil && s.github.CheckOwner(r.Context(), user.Login) == nil
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "identity": "GitHub App bot", "organization": s.github.Organization(), "team": s.github.Team(), "repositories": policy.Repositories, "resourceVersion": policy.ResourceVersion, "canManage": canManage, "permissions": map[string]string{"contents": "write", "pull_requests": "write", "actions": "write"}, "tokenLifetimeSeconds": 3600})
 }
 
 // This endpoint uses an audience-bound Kubernetes identity, not a browser
@@ -61,7 +70,24 @@ func (s *Server) handleGitHubCredentials(w http.ResponseWriter, r *http.Request)
 		writeError(w, status, "invalid credential request")
 		return
 	}
-	credential, err := s.github.RepositoryToken(ctx, request.Repository)
+	policy, err := s.repositoryPolicy(ctx)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "repository policy unavailable")
+		return
+	}
+	repo := strings.ToLower(strings.TrimSpace(request.Repository))
+	allowed := false
+	for _, selected := range policy.Repositories {
+		if selected == repo {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "repository credentials denied or unavailable")
+		return
+	}
+	credential, err := s.github.MintRepositoryToken(ctx, repo)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "repository credentials denied or unavailable")
 		return

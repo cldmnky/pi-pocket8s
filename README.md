@@ -58,7 +58,6 @@ helm upgrade --install pi-pocket charts/pi-pocket -n workspace -f deploy/openshi
   --set portal.github.installationID=789012 \
   --set portal.github.organization=your-org \
   --set portal.github.team=optional-team \
-  --set 'portal.github.repositories[0]=your-org/one-repo' \
   --set portal.github.existingSecret=pi-pocket-github-app
 ```
 
@@ -77,24 +76,34 @@ checks, while allowing selected `cldmnky` repositories:
    grant access to repositories or bypass the portal's membership checks.
 2. Find the personal account's installation ID (`GET /users/cldmnky/installation`
    with an App JWT, or the installation settings URL).
-3. Add this to your existing deployment values, substituting the actual numeric
-   personal installation ID. Leave the login organization's `installationID`,
-   `organization`, and optional `team` unchanged:
+3. Add the personal installation to deployment values. Leave the login
+   organization's `installationID`, `organization`, and optional `team` unchanged:
 
    ```yaml
    portal:
      github:
        repositoryInstallations:
          cldmnky: 12345678 # example only: installation on the personal account
-       repositories:
-         - cldmnky/pi-pocket8s
-         # Include any existing organization repositories you still need.
    ```
+4. Sign into the portal as an **active owner of the login organization**. Open
+   **Configuration → GitHub App bot → Load / reload repository catalog**, select
+   the repositories the agent may access, and **Save allowed repositories**.
+   The catalog includes only repositories granted to the App in the configured
+   installations, including private repositories. It is not the human's personal
+   GitHub access token, nor a list of all repositories on GitHub.
 
 `repositoryInstallations` maps account owners to installation IDs; it does not
-grant all repositories belonging to those owners. Every repository still needs
-an explicit `owner/name` entry in `repositories` and access in the App's
-installation settings. Before first use, the broker validates each installation's
+itself grant repository access. The portal selection is the authoritative
+allowlist, stored in a retained `pi-pocket-github-repositories` Secret in the
+management namespace. A fresh policy denies all; legacy Helm `repositories`
+values are ignored and never seeded. Ordinary organization/team members may
+log in and use the workspace, but only organization owners may edit this policy
+(team maintainers do not qualify). New credential requests use the selection
+immediately without agent restart, and malformed/unavailable policy fails
+closed. Already-issued tokens can remain valid for up to one hour after removal.
+Helm connected upgrades preserve portal edits; offline renders do not—never
+apply them over an existing policy Secret. The namespace-admin workspace cannot
+read or modify this management-namespace policy. Before first use, the broker validates each installation's
 account and rejects suspended or mismatched installations. With an
 empty mapping, existing organization-only configurations behave as before.
 

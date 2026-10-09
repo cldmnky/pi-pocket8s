@@ -38,7 +38,7 @@ type Options struct {
 	PrivateKeyFile string
 	Organization   string
 	Team           string
-	Repositories   []string // owner/name, explicitly selected; no wildcard
+	Repositories   []string // legacy static-policy API only; portal uses its management Secret
 	// Additional repository owners use separate installations of the same App.
 	// InstallationID remains the organization membership-check installation.
 	RepositoryInstallations map[string]int64
@@ -71,8 +71,8 @@ func New(options Options) (*Client, error) {
 	if options.Team != "" && !namePattern.MatchString(options.Team) {
 		return nil, errors.New("invalid GitHub team slug")
 	}
-	if len(options.Repositories) == 0 || len(options.Repositories) > 500 {
-		return nil, errors.New("select 1–500 GitHub repositories")
+	if len(options.Repositories) > 500 {
+		return nil, errors.New("select at most 500 GitHub repositories")
 	}
 	if len(options.RepositoryInstallations) > 500 {
 		return nil, errors.New("select at most 500 repository installations")
@@ -205,6 +205,9 @@ func (c *Client) CheckMember(ctx context.Context, login string) error {
 	return nil
 }
 
+// RepositoryToken retains the legacy static-policy helper for callers that
+// supply Options.Repositories. The portal does not use it: its broker checks
+// the management policy Secret then calls MintRepositoryToken.
 func (c *Client) RepositoryToken(ctx context.Context, repo string) (Token, error) {
 	repo = strings.ToLower(repo)
 	for _, allowed := range c.options.Repositories {
@@ -228,8 +231,12 @@ func (c *Client) installationToken(ctx context.Context, scope string) (Token, er
 		return Token{}, err
 	}
 	owner, installationID := c.options.Organization, c.options.InstallationID
+	catalog := strings.HasPrefix(scope, "catalog:")
 	if scope != "membership" {
 		owner = strings.Split(scope, "/")[0]
+		if catalog {
+			owner = strings.TrimPrefix(scope, "catalog:")
+		}
 		if !strings.EqualFold(owner, c.options.Organization) {
 			installationID = c.options.RepositoryInstallations[owner]
 			if installationID <= 0 {
@@ -256,6 +263,9 @@ func (c *Client) installationToken(ctx context.Context, scope string) (Token, er
 	var payload any
 	if scope == "membership" {
 		payload = map[string]any{"permissions": map[string]string{"members": "read"}}
+	} else if catalog {
+		// Catalog credentials stay in the portal; never returned to the workspace.
+		payload = map[string]any{"permissions": map[string]string{"metadata": "read"}}
 	} else {
 		payload = map[string]any{"repositories": []string{strings.Split(scope, "/")[1]}, "permissions": map[string]string{"contents": "write", "pull_requests": "write", "actions": "write"}}
 	}

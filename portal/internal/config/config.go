@@ -26,6 +26,7 @@ type Config struct {
 	PortalNamespace         string
 	Deployment              string
 	ConfigSecret            string
+	RepositoryPolicySecret  string
 	PocketURL               string
 	TerminalURL             string
 	PortalOrigin            string
@@ -48,6 +49,7 @@ func FromEnv() (Config, error) {
 		PortalOrigin: strings.TrimSpace(os.Getenv("PORTAL_ORIGIN")),
 		TokenFile:    strings.TrimSpace(os.Getenv("PORTAL_TOKEN_FILE")),
 	}
+	cfg.RepositoryPolicySecret = strings.TrimSpace(os.Getenv("GITHUB_REPOSITORY_POLICY_SECRET"))
 	cfg.PortalNamespace = cfg.Namespace
 	if namespace := strings.TrimSpace(os.Getenv("POCKET_NAMESPACE")); namespace != "" {
 		cfg.Namespace = namespace
@@ -85,7 +87,7 @@ func FromEnv() (Config, error) {
 				return Config{}, fmt.Errorf("cannot read GitHub client secret")
 			}
 		}
-		cfg.GitHub = githubapp.Options{AppID: appID, InstallationID: installationID, ClientID: os.Getenv("GITHUB_CLIENT_ID"), ClientSecret: strings.TrimSpace(string(secret)), PrivateKeyFile: privateKeyFile, Organization: os.Getenv("GITHUB_ORGANIZATION"), Team: os.Getenv("GITHUB_TEAM"), Repositories: strings.FieldsFunc(os.Getenv("GITHUB_REPOSITORIES"), func(r rune) bool { return r == ',' })}
+		cfg.GitHub = githubapp.Options{AppID: appID, InstallationID: installationID, ClientID: os.Getenv("GITHUB_CLIENT_ID"), ClientSecret: strings.TrimSpace(string(secret)), PrivateKeyFile: privateKeyFile, Organization: os.Getenv("GITHUB_ORGANIZATION"), Team: os.Getenv("GITHUB_TEAM")}
 		if raw := os.Getenv("GITHUB_REPOSITORY_INSTALLATIONS"); raw != "" {
 			if err := json.Unmarshal([]byte(raw), &cfg.GitHub.RepositoryInstallations); err != nil || cfg.GitHub.RepositoryInstallations == nil {
 				return Config{}, fmt.Errorf("GITHUB_REPOSITORY_INSTALLATIONS must be a JSON object of account names to numeric installation IDs")
@@ -106,8 +108,11 @@ func (c *Config) Validate() error {
 	if c.AuthMode != "" && c.AuthMode != "token" && c.AuthMode != "github" {
 		return fmt.Errorf("PORTAL_AUTH_MODE must be token or github")
 	}
-	if c.AuthMode == "github" && (!isDNSSubdomain(c.WorkspaceServiceAccount) || c.GitHub.AppID <= 0 || c.GitHub.InstallationID <= 0 || c.GitHub.Organization == "" || len(c.GitHub.Repositories) == 0) {
-		return fmt.Errorf("GitHub authentication requires app, installation, organization, repositories and workspace service account")
+	if c.AuthMode == "github" && (!isDNSSubdomain(c.WorkspaceServiceAccount) || c.GitHub.AppID <= 0 || c.GitHub.InstallationID <= 0 || c.GitHub.Organization == "") {
+		return fmt.Errorf("GitHub authentication requires app, installation, organization and workspace service account")
+	}
+	if c.AuthMode == "github" && !isDNSSubdomain(c.RepositoryPolicySecret) {
+		return fmt.Errorf("GITHUB_REPOSITORY_POLICY_SECRET must name the management-namespace policy Secret")
 	}
 	if c.AuthMode == "github" && (!isDNSLabel(c.PortalNamespace) || c.PortalNamespace == c.Namespace) {
 		return fmt.Errorf("GitHub portal must run outside the workspace namespace")

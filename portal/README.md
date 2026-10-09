@@ -103,11 +103,29 @@ portal's own CSP permits `frame-src` for the configured agent origin only.
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub mode | App OAuth client credentials (secret from env or `/run/github-app/client-secret`). |
 | `GITHUB_APP_PRIVATE_KEY_FILE` | no | App private key path, default `/run/github-app/private-key.pem`. |
 | `GITHUB_ORGANIZATION` / `GITHUB_TEAM` | GitHub mode | Membership gate; team optional. |
-| `GITHUB_REPOSITORIES` | GitHub mode | Comma-separated `owner/name` allow-list for bot tokens; no wildcards. |
+| `GITHUB_REPOSITORY_POLICY_SECRET` | GitHub mode | Retained allowlist Secret in the portal management namespace. The broker reads `repositories.json` on every request; missing, unreadable or invalid policy fails closed. Legacy `GITHUB_REPOSITORIES` is ignored. |
 | `GITHUB_REPOSITORY_INSTALLATIONS` | no | JSON object mapping additional repository owners to numeric installation IDs of the same App, e.g. `{"cldmnky":789012}`. Empty/unset preserves organization-only access. Foreign owners require an explicit mapping; this does not replace the repository allow-list or change the login gate. |
 
 `PORTAL_ORIGIN` is canonicalized (lower-case host, default `:443` removed) so
 browser `Origin` headers match exactly.
+
+## Repository policy
+
+The chart creates a retained `<release>-github-repositories` Secret in the
+management namespace with `repositories.json` initially `[]`. Helm uses lookup
+on connected upgrades to preserve portal changes. The portal SA has only
+`get`/`patch` on this named policy Secret there; the workspace SA has no binding.
+No GitHub credentials are persisted in the policy.
+
+Configuration → GitHub App bot loads the App-accessible catalog with read-only
+metadata installation tokens that never reach the agent. Active owners of the
+login organization can select and save up to 500 exact repository names. Owner
+status is checked fresh for each catalog/save request, independent of the team
+login gate; team maintainers and ordinary members cannot grant permissions.
+The save verifies names against the App catalog; stale resourceVersion returns
+409. The broker consults current policy before every mint/cache lookup: removing
+a repo blocks new credentials, but existing one-hour tokens are not retroactively
+revoked. Legacy Helm repository lists are not used or migrated.
 
 ## Runtime Secret contract
 
@@ -145,6 +163,8 @@ save. Like provider keys, it applies when the agent restarts.
 | `GET` | `/auth/github/start` → callback | none | GitHub App web-flow entry (GitHub mode). |
 | `POST` | `/auth/logout` | session + Origin | Clears the portal session (GitHub mode). |
 | `GET` | `/api/github/status` | session | Bot identity, organization/team, and allow-listed repositories (GitHub mode). |
+| `GET` | `/api/github/repositories` | org-owner session | Catalog of repositories exposed by configured App installations. |
+| `POST` | `/api/github/repositories` | org-owner session + Origin | Save `{resourceVersion, repositories: ["owner/name"]}` to management policy Secret. Empty array denies all; conflicts return 409. |
 | `POST` | `/api/github/credentials` | workspace SA token (`pi-pocket-github` audience) | One-hour, repository-scoped App installation token (GitHub mode). |
 | `GET` | `/` | none | Embedded SPA. |
 | `GET` | `/api/config` | bearer | Redacted config: `resourceVersion`, `allowedApiKeys`, `apiKeys` (name → set), `authorizedKeys`, `knownHosts`, `pocketUrl`, `ownerLoginUrl` (empty until the agent syncs it), `webSearch` (or `null`). |
@@ -189,7 +209,8 @@ never dropped.
 ## Kubernetes RBAC
 
 The Helm chart owns the manifests; the portal expects a namespaced Role with
-exactly these rules (and no cluster-scoped permissions):
+these workspace rules (GitHub mode additionally grants TokenReview and a
+management-namespace Role with get/patch on the one policy Secret):
 
 ```yaml
 rules:

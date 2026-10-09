@@ -51,6 +51,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /auth/session", s.handleSession)
 	mux.Handle("GET /api/github/status", s.api(s.handleGitHubStatus))
+	mux.Handle("GET /api/github/repositories", s.api(s.handleRepositoryCatalog))
+	mux.Handle("POST /api/github/repositories", s.api(s.handleSaveRepositories))
 	if s.sessions != nil {
 		mux.HandleFunc("GET /auth/github/start", s.sessions.Start)
 		mux.HandleFunc("GET /auth/github/callback", s.sessions.Callback)

@@ -95,6 +95,13 @@
       <section id="github-integration" hidden>
         <h3>GitHub App bot</h3>
         <p id="github-repositories"></p>
+        <section id="github-policy-manager" hidden>
+          <p>Select repositories the agent may access. Only active owners of the configured login organization may edit this policy.</p>
+          <p class="hint">The catalog shows repositories granted to this App in its configured installations, not every repository your user account can access. All workspace steering users share the selected bot permissions. Clearing every selection denies all new credentials. Already-issued tokens can remain valid for up to one hour.</p>
+          <button type="button" id="github-load-repositories">Load / reload repository catalog</button>
+          <div id="github-repository-options"></div>
+          <button type="button" id="github-save-repositories" disabled>Save allowed repositories</button>
+        </section>
         <p class="hint">Tokens are repository-scoped and short-lived, renewed per Git/gh operation. No personal login token is shared with the agent. Actions write permits more than dispatch; workflow-file writes are not granted.</p>
       </section>
 

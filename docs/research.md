@@ -117,3 +117,32 @@ errors, authorization codes, state/verifiers, cookies, or callback query strings
 Identity exchange and membership validation share a provider operation and are
 reported as one `identity_and_membership` stage. Tests assert success/failure
 events and absence of transaction/session secrets and provider error details.
+
+## Portal-managed repository policy (2026-10-09)
+
+Repository permissions now belong to the portal, not Helm's static repository
+list. GitHub mode creates a retained management-namespace policy Secret,
+initially `repositories.json: []`. Connected Helm upgrades preserve its data
+with lookup; offline renders must not overwrite live policy. Only the portal SA
+gets named-secret get/patch in that namespace. The workspace's namespace-admin
+SA has no management policy binding and cannot grant itself repository access.
+
+Login still checks the configured organization/team, and user tokens are still
+discarded. Editing policy and listing the catalog require a fresh organization
+membership response with `state=active` and `role=admin`; team-maintainer status
+does not qualify. The catalog enumerates configured installations with metadata-
+only tokens kept in the portal, follows pagination, validates owner mapping,
+and fails rather than presenting a silently truncated catalog. Saves validate
+against the catalog and use resourceVersion to reject conflicting edits.
+
+The broker rereads policy before every repository token response, including
+cached tokens. Missing, malformed, or unavailable policy fails closed; empty
+means no credentials. Existing issued tokens are not revoked and can survive
+up to their one-hour expiry. Installation ID mappings remain deployment inputs,
+but legacy Helm/environment repository lists grant nothing and are not migrated.
+
+Offline verification covers owner/member boundaries, anonymous and cross-origin
+requests, empty policy, changes visible without restart, revocation overriding
+cached credentials, malformed/unavailable policy, write conflicts, catalog
+pagination and installation owner validation. Helm 3.19 and Helm 4 rendering
+verify retained default-deny policy and management-only named-secret RBAC.

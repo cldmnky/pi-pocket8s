@@ -17,6 +17,7 @@
     webSearchProvider: '',
     webSearchModel: '',
     ownerLoginUrl: '',
+    repositoryPolicy: null,
     busy: false
   };
 
@@ -25,6 +26,7 @@
   var elementIds = [
     'message', 'unlock', 'token-form', 'token', 'unlock-button', 'app',
     'github-login', 'github-session', 'github-user', 'github-logout', 'github-integration', 'github-repositories', 'token-help',
+    'github-policy-manager', 'github-load-repositories', 'github-repository-options', 'github-save-repositories',
     'tab-workspace', 'tab-configure', 'panel-workspace', 'panel-configure',
     'owner-card', 'owner-missing', 'owner-link', 'owner-open', 'owner-copy', 'owner-qr',
     'agent-frame', 'frame-wrap', 'workspace-fullscreen', 'workspace-external', 'workspace-terminal', 'workspace-reload',
@@ -556,6 +558,56 @@
     }
   }
 
+  function renderRepositoryPolicy(integration) {
+    state.repositoryPolicy = integration;
+    elements['github-integration'].hidden = !integration.enabled;
+    elements['github-repositories'].textContent = 'Allowed repositories: ' + ((integration.repositories || []).join(', ') || '(none — new credentials denied)');
+    elements['github-policy-manager'].hidden = !integration.canManage;
+  }
+
+  async function loadRepositoryCatalog() {
+    elements['github-save-repositories'].disabled = true;
+    elements['github-load-repositories'].disabled = true;
+    try {
+      renderRepositoryPolicy(await api('GET', '/api/github/status'));
+      var catalog = await api('GET', '/api/github/repositories');
+      var selected = new Set(state.repositoryPolicy.repositories || []);
+      // Keep stale selections visible so an owner can remove them even if the
+      // App no longer exposes a previously allowed repository.
+      var repos = Array.from(new Set((catalog.repositories || []).concat(Array.from(selected)))).sort();
+      var container = elements['github-repository-options'];
+      container.textContent = '';
+      repos.forEach(function (repo) {
+        var label = document.createElement('label');
+        var checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = repo;
+        checkbox.checked = selected.has(repo);
+        label.appendChild(checkbox);
+        label.appendChild(document.createTextNode(' ' + repo));
+        container.appendChild(label);
+        container.appendChild(document.createElement('br'));
+      });
+      elements['github-save-repositories'].disabled = false;
+      setMessage('Select repositories and save. An empty selection denies all new credentials.', '');
+    } catch (err) { setMessage(err.message, 'error'); }
+    finally { elements['github-load-repositories'].disabled = false; }
+  }
+
+  async function saveRepositoryPolicy() {
+    if (!state.repositoryPolicy) return;
+    elements['github-save-repositories'].disabled = true;
+    elements['github-load-repositories'].disabled = true;
+    try {
+      var repos = Array.from(elements['github-repository-options'].querySelectorAll('input:checked')).map(function (input) { return input.value; });
+      await api('POST', '/api/github/repositories', { resourceVersion: state.repositoryPolicy.resourceVersion, repositories: repos });
+      renderRepositoryPolicy(await api('GET', '/api/github/status'));
+      setMessage('Repository policy saved. New Git/gh credentials use it immediately; existing tokens may remain valid up to one hour.', 'success');
+      elements['github-save-repositories'].disabled = false;
+    } catch (err) { setMessage(err.message + ' Reload the repository catalog before retrying.', 'error'); }
+    finally { elements['github-load-repositories'].disabled = false; }
+  }
+
   async function initAuth() {
     elements['token-form'].hidden = true;
     try {
@@ -571,8 +623,7 @@
           await refreshConfig();
           await refreshStatus();
           var integration = await api('GET', '/api/github/status');
-          elements['github-integration'].hidden = !integration.enabled;
-          elements['github-repositories'].textContent = 'Allowed repositories: ' + (integration.repositories || []).join(', ');
+          renderRepositoryPolicy(integration);
           elements['github-user'].textContent = session.login;
           elements['github-session'].hidden = false;
           elements.unlock.hidden = true;
@@ -600,6 +651,8 @@
   function init() {
     cacheElements();
     elements['github-logout'].addEventListener('click', logout);
+    elements['github-load-repositories'].addEventListener('click', loadRepositoryCatalog);
+    elements['github-save-repositories'].addEventListener('click', saveRepositoryPolicy);
     elements['token-form'].addEventListener('submit', unlock);
     elements['tab-workspace'].addEventListener('click', function () { selectTab('workspace'); });
     elements['tab-configure'].addEventListener('click', function () { selectTab('configure'); });

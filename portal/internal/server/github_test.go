@@ -32,8 +32,21 @@ func (fakeGitHub) Login(context.Context, string, string, string) (githubapp.User
 func (fakeGitHub) CheckMember(context.Context, string) error { return nil }
 func (fakeGitHub) Organization() string                      { return "example" }
 func (fakeGitHub) Team() string                              { return "builders" }
-func (fakeGitHub) Repositories() []string                    { return []string{"example/repo"} }
-func (fakeGitHub) RepositoryToken(ctx context.Context, repo string) (githubapp.Token, error) {
+func (fakeGitHub) CheckOwner(context.Context, string) error  { return nil }
+func (fakeGitHub) AvailableRepositories(context.Context) ([]string, error) {
+	return []string{"example/repo"}, nil
+}
+func (fakeGitHub) ValidateRepositories(repos []string) ([]string, error) {
+	out := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		if repo != "example/repo" {
+			return nil, errors.New("invalid repository")
+		}
+		out = append(out, repo)
+	}
+	return out, nil
+}
+func (fakeGitHub) MintRepositoryToken(ctx context.Context, repo string) (githubapp.Token, error) {
 	if repo != "example/repo" {
 		return githubapp.Token{}, errors.New("denied")
 	}
@@ -42,6 +55,10 @@ func (fakeGitHub) RepositoryToken(ctx context.Context, repo string) (githubapp.T
 
 func TestGitHubSessionsBrokerAudienceIdentityAndNoBearerBypass(t *testing.T) {
 	api := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/namespaces/management/secrets/policy" && r.Method == "GET" {
+			_, _ = w.Write([]byte(`{"metadata":{"resourceVersion":"1"},"data":{"repositories.json":"WyJleGFtcGxlL3JlcG8iXQ=="}}`))
+			return
+		}
 		if r.URL.Path != "/apis/authentication.k8s.io/v1/tokenreviews" {
 			t.Errorf("unexpected API path %s", r.URL.Path)
 			w.WriteHeader(404)
@@ -81,7 +98,7 @@ func TestGitHubSessionsBrokerAudienceIdentityAndNoBearerBypass(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.Config{AuthMode: "github", Namespace: "workspace", WorkspaceServiceAccount: "pocket", PortalOrigin: "https://portal.example", PocketURL: "https://pocket.example", TokenFile: token}
+	cfg := config.Config{AuthMode: "github", Namespace: "workspace", PortalNamespace: "management", RepositoryPolicySecret: "policy", WorkspaceServiceAccount: "pocket", PortalOrigin: "https://portal.example", PocketURL: "https://pocket.example", TokenFile: token}
 	s := New(cfg, kc, nil, fstest.MapFS{})
 	s.EnableGitHub(fakeGitHub{})
 	handler := s.Handler()
