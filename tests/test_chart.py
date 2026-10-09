@@ -132,6 +132,7 @@ class ChartTests(unittest.TestCase):
         env = {item["name"]: item.get("value") for item in pod["containers"][0]["env"]}
         self.assertEqual(env["PORTAL_AUTH_MODE"], "auto")
         self.assertEqual(env["GITHUB_CLIENT_ID"], "client")
+        self.assertEqual(json.loads(env["GITHUB_REPOSITORY_INSTALLATIONS"]), {})
         self.assertEqual(env["POCKET_NAMESPACE"], "test-pocket")
         self.assertEqual(env["POCKET_SERVICE_ACCOUNT"], "pi-pocket")
         self.assertEqual(pod["volumes"][0]["secret"]["secretName"], "github-app")
@@ -152,6 +153,42 @@ class ChartTests(unittest.TestCase):
             render(*options, "--set", "portal.github.existingSecret=")
         with self.assertRaises(subprocess.CalledProcessError):
             render(*options, "--set", "portal.github.repositories[0]=other/repo")
+
+    def test_github_personal_repository_installation(self):
+        options = ["--set", "portal.namespace=management", "--set", "portal.github.clientID=client",
+                   "--set", "portal.github.appID=123", "--set", "portal.github.installationID=456",
+                   "--set", "portal.github.organization=blahonga", "--set", "portal.github.team=builders",
+                   "--set", "portal.github.repositories[0]=cldmnky/repo",
+                   "--set", "portal.github.repositories[1]=blahonga/repo",
+                   "--set", "portal.github.existingSecret=github-app"]
+        for setting in ("--set", "--set-string"):
+            docs = render(*options, setting, "portal.github.repositoryInstallations.CLDMNKY=789")
+            portal = find(docs, "Deployment", "pi-pocket-portal")["spec"]["template"]["spec"]
+            env = {item["name"]: item.get("value") for item in portal["containers"][0]["env"]}
+            self.assertEqual(env["GITHUB_ORGANIZATION"], "blahonga")
+            self.assertEqual(env["GITHUB_TEAM"], "builders")
+            self.assertEqual(env["GITHUB_INSTALLATION_ID"], "456")
+            self.assertEqual(env["GITHUB_REPOSITORIES"], "cldmnky/repo,blahonga/repo")
+            self.assertEqual(json.loads(env["GITHUB_REPOSITORY_INSTALLATIONS"]), {"cldmnky": 789})
+        for extra in (
+            [],
+            ["--set", "portal.github.repositoryInstallations.cldmnky=0"],
+            ["--set", "portal.github.repositoryInstallations.cldmnky=-1"],
+            ["--set-string", "portal.github.repositoryInstallations.cldmnky=1.5"],
+            ["--set-string", "portal.github.repositoryInstallations.cldmnky=not-an-id"],
+            ["--set-string", "portal.github.repositoryInstallations.cldmnky=9223372036854775808"],
+            ["--set", "portal.github.repositoryInstallations.cldmnky=456"],
+            ["--set", "portal.github.repositoryInstallations.cldmnky=789", "--set", "portal.github.repositoryInstallations.other=789"],
+            ["--set", "portal.github.repositoryInstallations.cldmnky=789", "--set", "portal.github.repositoryInstallations.CLDMNKY=789"],
+            ["--set", "portal.github.repositoryInstallations.blahonga=789"],
+            ["--set", "portal.github.repositoryInstallations.bad/owner=789"],
+            ["--set", "portal.github.repositoryInstallations=789"],
+            ["--set", "portal.github.repositoryInstallations.cldmnky=789", "--set", "portal.github.repositories[0]=other/repo"],
+            ["--set", "portal.github.repositoryInstallations.cldmnky=789", "--set", "portal.github.repositories[0]=cldmnky/*"],
+            ["--set", "portal.github.repositoryInstallations.cldmnky=789", "--set", "portal.github.repositories[0]=cldmnky/repo.git"],
+        ):
+            with self.subTest(extra=extra), self.assertRaises(subprocess.CalledProcessError):
+                render(*options, *extra)
 
     def test_reject_unsafe_options(self):
         for options in (("replicas=2",), ("openshift.pocketSCC=privileged",), ("serviceAccount.namespaceRole=cluster-admin",), ("ingress.pocketHost=",), ("ingress.portalHost=",), ("ingress.enabled=false",)):

@@ -11,7 +11,7 @@ func setEnv(t *testing.T, values map[string]string) {
 	t.Helper()
 	for _, key := range []string{
 		"POD_NAMESPACE", "POCKET_DEPLOYMENT", "CONFIG_SECRET",
-		"POCKET_URL", "TERMINAL_URL", "PORTAL_ORIGIN", "PORTAL_TOKEN_FILE", "POCKET_NAMESPACE", "PORTAL_AUTH_MODE", "POCKET_SERVICE_ACCOUNT", "GITHUB_CLIENT_ID", "GITHUB_APP_ID", "GITHUB_INSTALLATION_ID", "GITHUB_ORGANIZATION", "GITHUB_TEAM", "GITHUB_REPOSITORIES", "GITHUB_CLIENT_SECRET", "GITHUB_CLIENT_SECRET_FILE", "GITHUB_APP_PRIVATE_KEY_FILE",
+		"POCKET_URL", "TERMINAL_URL", "PORTAL_ORIGIN", "PORTAL_TOKEN_FILE", "POCKET_NAMESPACE", "PORTAL_AUTH_MODE", "POCKET_SERVICE_ACCOUNT", "GITHUB_CLIENT_ID", "GITHUB_APP_ID", "GITHUB_INSTALLATION_ID", "GITHUB_ORGANIZATION", "GITHUB_TEAM", "GITHUB_REPOSITORIES", "GITHUB_REPOSITORY_INSTALLATIONS", "GITHUB_CLIENT_SECRET", "GITHUB_CLIENT_SECRET_FILE", "GITHUB_APP_PRIVATE_KEY_FILE",
 	} {
 		value := values[key]
 		t.Setenv(key, value)
@@ -70,6 +70,22 @@ func TestGitHubAutoDetectionAndFailClosed(t *testing.T) {
 	if err != nil || cfg.AuthMode != "github" || cfg.Namespace != "workspace" || cfg.PortalNamespace != "management" {
 		t.Fatalf("auto GitHub mode: %+v %v", cfg, err)
 	}
+	if len(cfg.GitHub.RepositoryInstallations) != 0 {
+		t.Error("legacy configuration gained repository installations")
+	}
+	t.Setenv("GITHUB_REPOSITORIES", "cldmnky/repo")
+	t.Setenv("GITHUB_REPOSITORY_INSTALLATIONS", `{"cldmnky":789}`)
+	cfg, err = config.FromEnv()
+	if err != nil || cfg.GitHub.RepositoryInstallations["cldmnky"] != 789 || cfg.GitHub.Organization != "example" || cfg.GitHub.InstallationID != 456 {
+		t.Fatalf("separate repository installation: %+v %v", cfg, err)
+	}
+	for _, raw := range []string{`null`, `[]`, `{"cldmnky":"789"}`, `{"cldmnky":1.5}`, `{"cldmnky":9223372036854775808}`, `not-json`} {
+		t.Setenv("GITHUB_REPOSITORY_INSTALLATIONS", raw)
+		if _, err := config.FromEnv(); err == nil || !strings.Contains(err.Error(), "GITHUB_REPOSITORY_INSTALLATIONS") {
+			t.Errorf("invalid repository installation JSON accepted: %s, %v", raw, err)
+		}
+	}
+	t.Setenv("GITHUB_REPOSITORY_INSTALLATIONS", `{"cldmnky":789}`)
 	t.Setenv("POD_NAMESPACE", "workspace")
 	if _, err = config.FromEnv(); err == nil {
 		t.Error("GitHub private key allowed in admin-enabled workspace namespace")

@@ -38,10 +38,14 @@ portal:
   github:
     appID: ""
     clientID: ""
-    installationID: ""
-    organization: ""
+    installationID: "" # organization installation used for login membership checks
+    organization: "" # login gate, independent of additional repository owners
     team: "" # empty allows all active organization members
-    repositories: [] # explicit organization/name list, no wildcards
+    repositories: [] # explicit owner/name list, no wildcards
+    # Additional account owners (including personal accounts) -> installation IDs
+    # of the SAME App. Empty preserves organization-only repository access.
+    # Everyone who can steer the shared workspace can use these bot permissions.
+    repositoryInstallations: {}
     existingSecret: "" # management namespace: client-secret + private-key.pem
     brokerCASecret: "" # optional workspace namespace Secret: ca.crt
   image:

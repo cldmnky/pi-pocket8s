@@ -28,6 +28,7 @@ import (
 
 var ErrDenied = errors.New("GitHub access denied")
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
+var ownerPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*$`)
 
 type Options struct {
 	AppID          int64
@@ -38,6 +39,9 @@ type Options struct {
 	Organization   string
 	Team           string
 	Repositories   []string // owner/name, explicitly selected; no wildcard
+	// Additional repository owners use separate installations of the same App.
+	// InstallationID remains the organization membership-check installation.
+	RepositoryInstallations map[string]int64
 }
 
 type User struct {
@@ -57,11 +61,11 @@ type Client struct {
 	exchangeURL         string
 	mu                  sync.Mutex
 	tokens              map[string]Token
-	installationChecked bool
+	installationChecked map[int64]bool
 }
 
 func New(options Options) (*Client, error) {
-	if options.AppID <= 0 || options.InstallationID <= 0 || options.ClientID == "" || options.ClientSecret == "" || !namePattern.MatchString(options.Organization) {
+	if options.AppID <= 0 || options.InstallationID <= 0 || options.ClientID == "" || options.ClientSecret == "" || !ownerPattern.MatchString(options.Organization) {
 		return nil, errors.New("GitHub App IDs, client credentials and organization are required")
 	}
 	if options.Team != "" && !namePattern.MatchString(options.Team) {
@@ -70,11 +74,38 @@ func New(options Options) (*Client, error) {
 	if len(options.Repositories) == 0 || len(options.Repositories) > 500 {
 		return nil, errors.New("select 1–500 GitHub repositories")
 	}
+	if len(options.RepositoryInstallations) > 500 {
+		return nil, errors.New("select at most 500 repository installations")
+	}
+	installations := map[string]int64{}
+	installationOwners := map[int64]string{options.InstallationID: strings.ToLower(options.Organization)}
+	for owner, id := range options.RepositoryInstallations {
+		if !ownerPattern.MatchString(owner) || id <= 0 {
+			return nil, errors.New("repository installations must map account names to positive installation IDs")
+		}
+		owner = strings.ToLower(owner)
+		if _, exists := installations[owner]; exists {
+			return nil, errors.New("duplicate GitHub repository owner")
+		}
+		if other, exists := installationOwners[id]; exists && other != owner {
+			return nil, errors.New("GitHub installation cannot belong to multiple owners")
+		}
+		if owner == strings.ToLower(options.Organization) && id != options.InstallationID {
+			return nil, errors.New("organization repositories must use the membership installation")
+		}
+		installations[owner] = id
+		installationOwners[id] = owner
+	}
+	options.RepositoryInstallations = installations
+	options.Repositories = append([]string(nil), options.Repositories...)
 	seen := map[string]bool{}
 	for i, repo := range options.Repositories {
 		parts := strings.Split(repo, "/")
-		if len(parts) != 2 || !strings.EqualFold(parts[0], options.Organization) || !namePattern.MatchString(parts[1]) || strings.HasSuffix(parts[1], ".git") {
-			return nil, errors.New("repositories must be organization/name without .git")
+		if len(parts) != 2 || !ownerPattern.MatchString(parts[0]) || !namePattern.MatchString(parts[1]) || strings.HasSuffix(strings.ToLower(parts[1]), ".git") {
+			return nil, errors.New("repositories must be owner/name without .git")
+		}
+		if !strings.EqualFold(parts[0], options.Organization) && installations[strings.ToLower(parts[0])] == 0 {
+			return nil, errors.New("repository owner requires an explicitly configured installation")
 		}
 		options.Repositories[i] = strings.ToLower(repo)
 		if seen[options.Repositories[i]] {
@@ -105,7 +136,7 @@ func New(options Options) (*Client, error) {
 	if key.N.BitLen() < 2048 {
 		return nil, errors.New("GitHub App RSA key must be at least 2048 bits")
 	}
-	return &Client{options: options, key: key, http: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, apiURL: "https://api.github.com", exchangeURL: "https://github.com/login/oauth/access_token", tokens: map[string]Token{}}, nil
+	return &Client{options: options, key: key, http: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, apiURL: "https://api.github.com", exchangeURL: "https://github.com/login/oauth/access_token", tokens: map[string]Token{}, installationChecked: map[int64]bool{}}, nil
 }
 
 func (c *Client) Repositories() []string { return append([]string(nil), c.options.Repositories...) }
@@ -196,20 +227,31 @@ func (c *Client) installationToken(ctx context.Context, scope string) (Token, er
 	if err != nil {
 		return Token{}, err
 	}
-	if !c.installationChecked {
+	owner, installationID := c.options.Organization, c.options.InstallationID
+	if scope != "membership" {
+		owner = strings.Split(scope, "/")[0]
+		if !strings.EqualFold(owner, c.options.Organization) {
+			installationID = c.options.RepositoryInstallations[owner]
+			if installationID <= 0 {
+				return Token{}, ErrDenied
+			}
+		}
+	}
+	installationPath := "/app/installations/" + strconv.FormatInt(installationID, 10)
+	if !c.installationChecked[installationID] {
 		var installation struct {
 			Account struct {
 				Login string `json:"login"`
 			} `json:"account"`
 			SuspendedAt *string `json:"suspended_at"`
 		}
-		if err = c.api(ctx, http.MethodGet, "/app/installations/"+strconv.FormatInt(c.options.InstallationID, 10), jwt, nil, &installation); err != nil {
+		if err = c.api(ctx, http.MethodGet, installationPath, jwt, nil, &installation); err != nil {
 			return Token{}, err
 		}
-		if !strings.EqualFold(installation.Account.Login, c.options.Organization) || installation.SuspendedAt != nil {
+		if !strings.EqualFold(installation.Account.Login, owner) || installation.SuspendedAt != nil {
 			return Token{}, ErrDenied
 		}
-		c.installationChecked = true
+		c.installationChecked[installationID] = true
 	}
 	var payload any
 	if scope == "membership" {
@@ -218,7 +260,7 @@ func (c *Client) installationToken(ctx context.Context, scope string) (Token, er
 		payload = map[string]any{"repositories": []string{strings.Split(scope, "/")[1]}, "permissions": map[string]string{"contents": "write", "pull_requests": "write", "actions": "write"}}
 	}
 	var token Token
-	if err = c.api(ctx, http.MethodPost, "/app/installations/"+strconv.FormatInt(c.options.InstallationID, 10)+"/access_tokens", jwt, payload, &token); err != nil {
+	if err = c.api(ctx, http.MethodPost, installationPath+"/access_tokens", jwt, payload, &token); err != nil {
 		return Token{}, err
 	}
 	if token.Value == "" || time.Until(token.ExpiresAt) < time.Minute {

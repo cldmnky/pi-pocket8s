@@ -68,3 +68,35 @@ Three issues were found during rollout and fixed in the chart, all verified:
 3. **RuntimeDefault seccomp blocks nested user namespaces.** `unshare -U` inside the pod failed with `ENOSYS`, and `podman info` failed with `cannot clone: Operation not permitted`. A probe pod with `seccompProfile: Unconfined` under the same `nested-container` SCC created user namespaces successfully. The chart therefore defaults the pocket pod to `Unconfined` under `nested-container` (that SCC permits any profile) and keeps `RuntimeDefault` under `restricted-v3` (the only profile that SCC allows) via the `pocket.seccomp` helper and `podSeccomp` override. Verified after the fix: `podman info` reports `vfs rootless=true`, and `podman run --network=host --rm <image> echo nested-run-ok` succeeds. (The stock `quay.io/libpod/banner` demo fails only because its nginx cannot bind privileged port 80 as a rootless user — expected.)
 
 End-to-end verification after the fixes: both pods Running, both HTTPS routes return 200, portal `/api/status` reports the deployment running, `/api/config` returns the redacted view, podman pull/run works nested, `oc auth can-i get secrets` answers `yes`, and the owner token never appears in container logs.
+
+## Separate GitHub login and repository installations (2026-10-09)
+
+The original integration deliberately discarded the GitHub user token after
+identity lookup and used one organization installation for both membership
+checks and repository bot tokens. That coupled the login gate to repository
+ownership and prevented personal-account repositories even when their owner
+could sign in as an organization member.
+
+`portal.github.repositoryInstallations` now explicitly maps additional account
+owners to installations of the same App. The original `installationID` still
+serves organization/team membership checks; the repository allow-list remains
+mandatory, and each broker response still has only one repository with
+`contents`, `pull_requests`, and `actions` write permissions. Installation
+validation is tracked per installation; token caches remain keyed by full
+`owner/name`, not just repository name. This is not per-user delegation:
+everyone trusted to steer the shared workspace can use all configured bot
+permissions. App keys remain outside the namespace-admin workspace, and no
+Kubernetes permissions or network policies change.
+
+GitHub documents that [installation tokens access resources belonging to the
+installed account](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation),
+cannot exceed the installation's repository access or permissions, and expire
+after one hour. An organization-owned App must be
+[public to install on another account](https://docs.github.com/en/apps/creating-github-apps/setting-up-a-github-app/making-a-github-app-public-or-private);
+App visibility is not a repository access grant.
+
+Offline tests cover separate organization login and personal repository minting,
+same-named repositories across owners, per-repository cache renewal, owner
+mismatches, suspended installations, malformed mappings, and Helm propagation
+without changing the login gate. Personal-account installation and live-cluster
+rollout have not been verified in this change.

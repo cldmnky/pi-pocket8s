@@ -46,7 +46,7 @@ Setup:
 
 1. Register a **GitHub App** (organization-owned). Homepage `https://<portalHost>`, callback `https://<portalHost>/auth/github/callback` (exact match), uncheck webhook (none are used), enable "Request user authorization (OAuth) during installation" if you want per-user authorization prompts.
 2. Repository permissions: Contents **Read and write**, Pull requests **Read and write**, Actions **Read and write**. Organization permission: Members **Read-only** (for team checks). Nothing else.
-3. Install the App on the target organization, granting access only to the allow-listed repositories. Note the **installation ID** (`GET /orgs/{org}/installation` with a JWT, or from the App settings page URL).
+3. Install the App on the login organization. Note its **installation ID** (`GET /orgs/{org}/installation` with a JWT, or from the App settings page URL). This installation verifies membership and serves allow-listed repositories owned by that organization. Additional repository owners can use separate installations of the same App (see below).
 4. Create the App credentials Secret in the management namespace: `client-secret` (the App's client secret) and `private-key.pem` (a generated App private key, RS256).
 5. Create the management namespace, then install/upgrade with:
 
@@ -63,6 +63,46 @@ helm upgrade --install pi-pocket charts/pi-pocket -n workspace -f deploy/openshi
 ```
 
 The first sign-in must be performed by an organization owner (to approve the App authorization if prompted). Every subsequent sign-in requires active team/organization membership. Because anyone admitted can still steer the shared agent and its namespace-admin rights, only invite teams you would trust at the workspace keyboard; this does not isolate users from each other. Non-GitHub prerequisites (provider keys, SSH keys, Quay) are unchanged.
+
+### Personal repositories with organization login
+
+The portal login gate and bot repository ownership can be different. For example,
+keep `portal.github.organization=blahonga` and its `installationID` for membership
+checks, while allowing selected `cldmnky` repositories:
+
+1. Install the **same GitHub App** on the `cldmnky` personal account, granting
+   access only to the intended repositories. An organization-owned private App
+   can only be installed on its owning organization; make it public before
+   installing it on another account. Public visibility does not automatically
+   grant access to repositories or bypass the portal's membership checks.
+2. Find the personal account's installation ID (`GET /users/cldmnky/installation`
+   with an App JWT, or the installation settings URL).
+3. Add this to your existing deployment values, substituting the actual numeric
+   personal installation ID. Leave the login organization's `installationID`,
+   `organization`, and optional `team` unchanged:
+
+   ```yaml
+   portal:
+     github:
+       repositoryInstallations:
+         cldmnky: 12345678 # example only: installation on the personal account
+       repositories:
+         - cldmnky/pi-pocket8s
+         # Include any existing organization repositories you still need.
+   ```
+
+`repositoryInstallations` maps account owners to installation IDs; it does not
+grant all repositories belonging to those owners. Every repository still needs
+an explicit `owner/name` entry in `repositories` and access in the App's
+installation settings. Before first use, the broker validates each installation's
+account and rejects suspended or mismatched installations. With an
+empty mapping, existing organization-only configurations behave as before.
+
+**All trusted users who can steer the shared workspace can exercise these
+personal-repository bot permissions**, not just the personal account owner.
+Login does not delegate a user's token or restrict repository access per user.
+In the workspace, use `gh repo clone cldmnky/pi-pocket8s` or
+`gh pr list -R cldmnky/pi-pocket8s`; each command obtains a one-repository App bot token.
 
 ## Build and publish locally
 
@@ -224,4 +264,3 @@ oc exec -n pi-pocket deploy/pi-pocket -- oc auth can-i get secrets
 ```
 
 Server-side dry-run of Deployments checks API schemas, not actual pod scheduling/mount support. See [research and validation notes](docs/research.md) for the live user-namespace/PVC admission probe and source references.
-

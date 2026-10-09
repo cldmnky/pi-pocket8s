@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -192,5 +193,190 @@ func TestUpstreamErrorsNeverExposeCredentials(t *testing.T) {
 	_, err = c.Login(context.Background(), "code", "https://portal.example/callback", "verifier")
 	if err == nil || strings.Contains(err.Error(), "personal-user-token") || strings.Contains(err.Error(), "secret response") {
 		t.Fatalf("unsanitized error %v", err)
+	}
+}
+
+func TestSeparateRepositoryInstallationsPreserveLoginAndTokenScopes(t *testing.T) {
+	options := testOptions(t)
+	options.RepositoryInstallations = map[string]int64{"CLDMNKY": 789}
+	options.Repositories = []string{"example/repo", "CLDMNKY/repo", "cldmnky/second"}
+	c, err := New(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The client owns copies: caller mutations must not change authorization.
+	options.RepositoryInstallations["CLDMNKY"] = 999
+	options.Repositories[1] = "other/repo"
+	var mu sync.Mutex
+	checks, mints := map[string]int{}, map[string]int{}
+	membershipActive := true
+	api := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/exchange":
+			_, _ = w.Write([]byte(`{"access_token":"user-login-token"}`))
+		case "/user":
+			_, _ = w.Write([]byte(`{"id":42,"login":"cldmnky"}`))
+		case "/app/installations/456", "/app/installations/789":
+			mu.Lock()
+			checks[r.URL.Path]++
+			mu.Unlock()
+			owner := "example"
+			if strings.HasSuffix(r.URL.Path, "/789") {
+				owner = "cldmnky"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"account": map[string]string{"login": owner}, "suspended_at": nil})
+		case "/app/installations/456/access_tokens", "/app/installations/789/access_tokens":
+			var body struct {
+				Repositories []string          `json:"repositories"`
+				Permissions  map[string]string `json:"permissions"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			value := "membership-token"
+			if body.Permissions["members"] == "read" {
+				if r.URL.Path != "/app/installations/456/access_tokens" || len(body.Permissions) != 1 || len(body.Repositories) != 0 {
+					t.Errorf("membership token used repository installation: %s %+v", r.URL.Path, body)
+				}
+			} else {
+				if len(body.Repositories) != 1 || len(body.Permissions) != 3 || body.Permissions["contents"] != "write" || body.Permissions["pull_requests"] != "write" || body.Permissions["actions"] != "write" {
+					t.Errorf("incorrect repository scope: %+v", body)
+				}
+				value = fmt.Sprintf("%s/%s", r.URL.Path, strings.Join(body.Repositories, ","))
+			}
+			mu.Lock()
+			mints[value]++
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(Token{value, time.Now().Add(time.Hour)})
+		case "/orgs/example/teams/builders/memberships/cldmnky":
+			if r.Header.Get("Authorization") != "Bearer membership-token" {
+				t.Error("membership checked with repository or user token")
+			}
+			mu.Lock()
+			state := "pending"
+			if membershipActive {
+				state = "active"
+			}
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]string{"state": state})
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+			w.WriteHeader(404)
+		}
+	}))
+	defer api.Close()
+	c.http, c.apiURL, c.exchangeURL = api.Client(), api.URL, api.URL+"/exchange"
+	if user, err := c.Login(context.Background(), "code", "https://portal.example/callback", "verifier"); err != nil || user.Login != "cldmnky" {
+		t.Fatalf("organization-gated login: %+v %v", user, err)
+	}
+	for _, tt := range []struct{ repo, token string }{
+		{"example/repo", "/app/installations/456/access_tokens/repo"},
+		{"CLDMNKY/repo", "/app/installations/789/access_tokens/repo"},
+		{"cldmnky/second", "/app/installations/789/access_tokens/second"},
+	} {
+		for range 2 {
+			if token, err := c.RepositoryToken(context.Background(), tt.repo); err != nil || token.Value != tt.token {
+				t.Fatalf("repository %s: %+v %v", tt.repo, token, err)
+			}
+		}
+	}
+	for _, repo := range []string{"cldmnky/unselected", "other/repo"} {
+		if _, err := c.RepositoryToken(context.Background(), repo); !errors.Is(err, ErrDenied) {
+			t.Errorf("unselected repository accepted: %s", repo)
+		}
+	}
+	if err := c.CheckMember(context.Background(), "cldmnky"); err != nil {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	c.tokens["cldmnky/repo"] = Token{"expiring", time.Now().Add(time.Minute)}
+	c.mu.Unlock()
+	if _, err := c.RepositoryToken(context.Background(), "cldmnky/repo"); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	membershipActive = false
+	mu.Unlock()
+	if _, err := c.Login(context.Background(), "code", "https://portal.example/callback", "verifier"); !errors.Is(err, ErrDenied) {
+		t.Fatalf("personal repository access bypassed organization membership: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(checks) != 2 || checks["/app/installations/456"] != 1 || checks["/app/installations/789"] != 1 {
+		t.Errorf("installation validation must be per installation: %v", checks)
+	}
+	if len(mints) != 4 || mints["membership-token"] != 1 || mints["/app/installations/456/access_tokens/repo"] != 1 || mints["/app/installations/789/access_tokens/repo"] != 2 || mints["/app/installations/789/access_tokens/second"] != 1 {
+		t.Errorf("tokens must cache and renew per full repository name: %v", mints)
+	}
+}
+
+func TestInvalidRepositoryInstallationConfiguration(t *testing.T) {
+	options := testOptions(t)
+	for _, tt := range []struct {
+		name          string
+		installations map[string]int64
+	}{
+		{"zero ID", map[string]int64{"cldmnky": 0}},
+		{"negative ID", map[string]int64{"cldmnky": -1}},
+		{"invalid owner", map[string]int64{"cldmnky/repo": 789}},
+		{"wildcard owner", map[string]int64{"*": 789}},
+		{"duplicate owner", map[string]int64{"cldmnky": 789, "CLDMNKY": 789}},
+		{"membership installation reused", map[string]int64{"cldmnky": 456}},
+		{"installation reused", map[string]int64{"cldmnky": 789, "other": 789}},
+		{"membership installation overridden", map[string]int64{"example": 789}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			bad := options
+			bad.RepositoryInstallations = tt.installations
+			if _, err := New(bad); err == nil {
+				t.Fatal("invalid installation configuration accepted")
+			}
+		})
+	}
+}
+
+func TestRepositoryInstallationOwnerAndSuspensionCheckedIndependently(t *testing.T) {
+	options := testOptions(t)
+	options.RepositoryInstallations = map[string]int64{"cldmnky": 789}
+	options.Repositories = []string{"example/repo", "cldmnky/repo"}
+	for _, tt := range []struct {
+		name     string
+		status   int
+		response string
+	}{
+		{"wrong owner", 200, `{"account":{"login":"other"},"suspended_at":null}`},
+		{"suspended", 200, `{"account":{"login":"cldmnky"},"suspended_at":"2026-10-09T00:00:00Z"}`},
+		{"removed installation", 404, `{"message":"Not Found"}`},
+		{"unavailable", 500, `{"message":"Unavailable"}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := New(options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			api := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/app/installations/456":
+					_, _ = w.Write([]byte(`{"account":{"login":"example"}}`))
+				case "/app/installations/456/access_tokens":
+					_ = json.NewEncoder(w).Encode(Token{"org-token", time.Now().Add(time.Hour)})
+				case "/app/installations/789":
+					w.WriteHeader(tt.status)
+					_, _ = w.Write([]byte(tt.response))
+				default:
+					t.Errorf("must not mint for invalid repository installation: %s", r.URL.Path)
+					w.WriteHeader(403)
+				}
+			}))
+			defer api.Close()
+			c.http, c.apiURL = api.Client(), api.URL
+			if _, err := c.RepositoryToken(context.Background(), "example/repo"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.RepositoryToken(context.Background(), "cldmnky/repo"); err == nil || (tt.status != 500 && !errors.Is(err, ErrDenied)) {
+				t.Fatalf("invalid repository installation accepted: %v", err)
+			}
+		})
 	}
 }
