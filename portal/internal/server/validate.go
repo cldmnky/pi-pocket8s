@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"golang.org/x/crypto/ssh"
@@ -60,10 +61,19 @@ var allowedAPIKeySet = func() map[string]struct{} {
 }()
 
 type configUpdateRequest struct {
-	ResourceVersion string        `json:"resourceVersion"`
-	APIKeys         *apiKeysPatch `json:"apiKeys"`
-	AuthorizedKeys  *string       `json:"authorizedKeys"`
-	KnownHosts      *string       `json:"knownHosts"`
+	ResourceVersion string          `json:"resourceVersion"`
+	APIKeys         *apiKeysPatch   `json:"apiKeys"`
+	AuthorizedKeys  *string         `json:"authorizedKeys"`
+	KnownHosts      *string         `json:"knownHosts"`
+	WebSearch       *webSearchPatch `json:"webSearch"`
+}
+
+// webSearchPatch chooses the model that performs web searches. Both fields empty
+// clears the setting; one of them alone is rejected, because half a choice would
+// leave the agent searching with a provider the operator did not choose.
+type webSearchPatch struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
 }
 
 type apiKeysPatch struct {
@@ -80,7 +90,7 @@ func validateConfigUpdate(req *configUpdateRequest) error {
 	if len(req.ResourceVersion) > 128 || !isPrintableASCII(req.ResourceVersion) {
 		return errors.New("resourceVersion is invalid")
 	}
-	if req.APIKeys == nil && req.AuthorizedKeys == nil && req.KnownHosts == nil {
+	if req.APIKeys == nil && req.AuthorizedKeys == nil && req.KnownHosts == nil && req.WebSearch == nil {
 		return errors.New("no configuration changes requested")
 	}
 	if req.APIKeys != nil {
@@ -118,6 +128,38 @@ func validateConfigUpdate(req *configUpdateRequest) error {
 		if err := validateKnownHosts(*req.KnownHosts); err != nil {
 			return err
 		}
+	}
+	if req.WebSearch != nil {
+		if err := validateWebSearch(req.WebSearch); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Provider ids and model ids as the agent's model registry spells them; the model
+// may carry a namespace ("anthropic/claude-haiku-4.5") or a version suffix. Kept
+// narrow on purpose: these two strings become the agent's web-search.json.
+var (
+	webSearchProviderRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+	webSearchModelRE    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$`)
+)
+
+func validateWebSearch(patch *webSearchPatch) error {
+	provider := strings.TrimSpace(patch.Provider)
+	model := strings.TrimSpace(patch.Model)
+
+	if provider == "" && model == "" {
+		return nil
+	}
+	if provider == "" || model == "" {
+		return errors.New("webSearch needs a provider and a model, or neither to clear it")
+	}
+	if !webSearchProviderRE.MatchString(provider) {
+		return fmt.Errorf("invalid webSearch provider %q", provider)
+	}
+	if !webSearchModelRE.MatchString(model) {
+		return fmt.Errorf("invalid webSearch model %q", model)
 	}
 	return nil
 }

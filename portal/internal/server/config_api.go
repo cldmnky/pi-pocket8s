@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/cldmnky/pi-pocket8s/portal/internal/kube"
 )
@@ -17,6 +18,10 @@ const (
 	authorizedKeysSecretKey = "authorized_keys"
 	knownHostsSecretKey     = "known_hosts"
 	ownerLoginSecretKey     = "owner-login-url"
+	// webSearchSecretKey is mounted into the agent at /run/pocket-config/web-search.json;
+	// the entrypoint points the agent's web-search config at it, so the agent picks up
+	// this setting on its next start.
+	webSearchSecretKey = "web-search.json"
 )
 
 // configView is the redacted runtime configuration shown to the browser.
@@ -33,6 +38,14 @@ type configView struct {
 	PocketURL       string          `json:"pocketUrl"`
 	TerminalURL     string          `json:"terminalUrl"`
 	OwnerLoginURL   string          `json:"ownerLoginUrl"`
+	// WebSearch is nil until an operator chooses a search model.
+	WebSearch *webSearchView `json:"webSearch"`
+}
+
+// webSearchView is the stored choice of which model performs web searches.
+type webSearchView struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
 }
 
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +57,7 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	view, err := s.configView(secret)
 	if err != nil {
 		s.log.Error("runtime secret is invalid", "error", err)
-		writeError(w, http.StatusInternalServerError, "runtime secret contains invalid api-keys.json")
+		writeError(w, http.StatusInternalServerError, "runtime secret is invalid: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, view)
@@ -76,7 +89,7 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, r *http.Request) {
 		stored, err := readAPIKeys(secret)
 		if err != nil {
 			s.log.Error("runtime secret is invalid", "error", err)
-			writeError(w, http.StatusInternalServerError, "runtime secret contains invalid api-keys.json")
+			writeError(w, http.StatusInternalServerError, "runtime secret is invalid: "+err.Error())
 			return
 		}
 		for name, value := range req.APIKeys.Set {
@@ -102,6 +115,24 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.KnownHosts != nil {
 		dataPatch[knownHostsSecretKey] = base64.StdEncoding.EncodeToString([]byte(*req.KnownHosts))
+	}
+	if req.WebSearch != nil {
+		if strings.TrimSpace(req.WebSearch.Provider) == "" && strings.TrimSpace(req.WebSearch.Model) == "" {
+			// Clearing removes the key: the mount then holds no file and the agent goes
+			// back to choosing for itself.
+			dataPatch[webSearchSecretKey] = nil
+		} else {
+			encoded, err := json.Marshal(map[string]string{
+				"provider": strings.TrimSpace(req.WebSearch.Provider),
+				"model":    strings.TrimSpace(req.WebSearch.Model),
+			})
+			if err != nil {
+				s.log.Error("encode web search setting", "error", err)
+				writeError(w, http.StatusInternalServerError, "internal server error")
+				return
+			}
+			dataPatch[webSearchSecretKey] = base64.StdEncoding.EncodeToString(encoded)
+		}
 	}
 	if len(dataPatch) == 0 {
 		writeError(w, http.StatusBadRequest, "no configuration changes requested")
@@ -130,7 +161,7 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, r *http.Request) {
 	view, err := s.configView(updated)
 	if err != nil {
 		s.log.Error("saved runtime secret is invalid", "error", err)
-		writeError(w, http.StatusInternalServerError, "runtime secret contains invalid api-keys.json")
+		writeError(w, http.StatusInternalServerError, "runtime secret is invalid: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, view)
@@ -159,6 +190,10 @@ func (s *Server) configView(secret *kube.Secret) (configView, error) {
 	if err != nil {
 		return configView{}, err
 	}
+	webSearch, err := readWebSearch(secret)
+	if err != nil {
+		return configView{}, err
+	}
 	return configView{
 		ResourceVersion: secret.Metadata.ResourceVersion,
 		AllowedAPIKeys:  append([]string(nil), allowedAPIKeyNames...),
@@ -168,7 +203,35 @@ func (s *Server) configView(secret *kube.Secret) (configView, error) {
 		PocketURL:       s.cfg.PocketURL,
 		TerminalURL:     s.cfg.TerminalURL,
 		OwnerLoginURL:   string(ownerLogin),
+		WebSearch:       webSearch,
 	}, nil
+}
+
+// readWebSearch parses the stored search-model choice. An absent or empty entry is
+// not an error; a present one must name both a provider and a model, because half a
+// choice would be mounted into the agent as a file it cannot use.
+func readWebSearch(secret *kube.Secret) (*webSearchView, error) {
+	raw, present, err := secret.Bytes(webSearchSecretKey)
+	if err != nil {
+		return nil, err
+	}
+	if !present || len(bytes.TrimSpace(raw)) == 0 {
+		return nil, nil
+	}
+	var stored webSearchView
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if err := decoder.Decode(&stored); err != nil {
+		return nil, fmt.Errorf("%s: %w", webSearchSecretKey, err)
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("%s: trailing data", webSearchSecretKey)
+	}
+	stored.Provider = strings.TrimSpace(stored.Provider)
+	stored.Model = strings.TrimSpace(stored.Model)
+	if stored.Provider == "" || stored.Model == "" {
+		return nil, fmt.Errorf("%s: needs a provider and a model", webSearchSecretKey)
+	}
+	return &stored, nil
 }
 
 // readAPIKeys parses the api-keys.json secret entry. Unknown names already

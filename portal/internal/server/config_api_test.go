@@ -405,3 +405,121 @@ func storedAPIKeys(t *testing.T, env *portalTestEnv) map[string]string {
 	}
 	return keys
 }
+
+func TestGetConfigReportsWebSearchSetting(t *testing.T) {
+	env := newPortalTestEnv(t)
+
+	view := decodeJSON[configViewResponse](t, env.getConfig())
+	if view.WebSearch != nil {
+		t.Fatalf("webSearch = %+v, want nil before anything is set", view.WebSearch)
+	}
+
+	env.fake.setSecretValue("web-search.json", `{"provider":"opencode-go","model":"muse-spark-1.3-contributor"}`)
+	view = decodeJSON[configViewResponse](t, env.getConfig())
+	if view.WebSearch == nil || view.WebSearch.Provider != "opencode-go" || view.WebSearch.Model != "muse-spark-1.3-contributor" {
+		t.Fatalf("webSearch = %+v", view.WebSearch)
+	}
+}
+
+func TestGetConfigRejectsMalformedWebSearch(t *testing.T) {
+	for name, stored := range map[string]string{
+		"not json":       "this is not json",
+		"missing model":  `{"provider":"opencode-go"}`,
+		"trailing data":  `{"provider":"opencode-go","model":"muse"} {}`,
+		"empty provider": `{"provider":"  ","model":"muse"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := newPortalTestEnv(t)
+			env.fake.setSecretValue("web-search.json", stored)
+			result := env.getConfig()
+			if result.Status != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500 (body %s)", result.Status, result.Body)
+			}
+			if !strings.Contains(string(result.Body), "web-search.json") {
+				t.Errorf("error body = %s, want mention of web-search.json", result.Body)
+			}
+		})
+	}
+}
+
+func TestPostConfigSetsAndClearsWebSearch(t *testing.T) {
+	env := newPortalTestEnv(t)
+
+	result := env.postConfig(map[string]any{
+		"resourceVersion": "1",
+		"webSearch":       map[string]string{"provider": "openai-codex", "model": "gpt-5.6-sol"},
+	})
+	if result.Status != http.StatusOK {
+		t.Fatalf("POST /api/config status = %d, want 200 (body %s)", result.Status, result.Body)
+	}
+	view := decodeJSON[configViewResponse](t, result)
+	if view.WebSearch == nil || view.WebSearch.Provider != "openai-codex" || view.WebSearch.Model != "gpt-5.6-sol" {
+		t.Fatalf("webSearch = %+v", view.WebSearch)
+	}
+
+	// What the agent reads from the mounted file: provider and model, nothing else.
+	stored, present := env.fake.secretValue("web-search.json")
+	if !present {
+		t.Fatal("web-search.json was not written to the secret")
+	}
+	var file map[string]any
+	if err := json.Unmarshal([]byte(stored), &file); err != nil {
+		t.Fatalf("stored web-search.json is not JSON: %v (%q)", err, stored)
+	}
+	if len(file) != 2 || file["provider"] != "openai-codex" || file["model"] != "gpt-5.6-sol" {
+		t.Errorf("stored web-search.json = %q", stored)
+	}
+
+	// Both empty clears the key, so the mount holds no file at all.
+	result = env.postConfig(map[string]any{
+		"resourceVersion": view.ResourceVersion,
+		"webSearch":       map[string]string{},
+	})
+	if result.Status != http.StatusOK {
+		t.Fatalf("clearing status = %d, want 200 (body %s)", result.Status, result.Body)
+	}
+	if cleared := decodeJSON[configViewResponse](t, result); cleared.WebSearch != nil {
+		t.Errorf("webSearch = %+v after clearing", cleared.WebSearch)
+	}
+	if _, present := env.fake.secretValue("web-search.json"); present {
+		t.Error("web-search.json is still in the secret after clearing")
+	}
+}
+
+func TestPostConfigValidatesWebSearch(t *testing.T) {
+	cases := map[string]struct {
+		body    map[string]string
+		wantErr string
+	}{
+		"provider without model": {map[string]string{"provider": "opencode-go"}, "needs a provider and a model"},
+		"model without provider": {map[string]string{"model": "muse-spark-1.3-contributor"}, "needs a provider and a model"},
+		"provider with spaces":   {map[string]string{"provider": "OpenCode Go", "model": "muse"}, "invalid webSearch provider"},
+		"model with spaces":      {map[string]string{"provider": "opencode-go", "model": "muse spark"}, "invalid webSearch model"},
+		"model with quote":       {map[string]string{"provider": "opencode-go", "model": `muse"}`}, "invalid webSearch model"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			env := newPortalTestEnv(t)
+			result := env.postConfig(map[string]any{"resourceVersion": "1", "webSearch": tc.body})
+			if result.Status != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (body %s)", result.Status, result.Body)
+			}
+			if !strings.Contains(string(result.Body), tc.wantErr) {
+				t.Errorf("error = %s, want %q", result.Body, tc.wantErr)
+			}
+			if _, present := env.fake.secretValue("web-search.json"); present {
+				t.Error("a rejected update still wrote web-search.json")
+			}
+		})
+	}
+
+	// A namespaced model id is legitimate: OpenRouter and OpenCode spell them that way.
+	env := newPortalTestEnv(t)
+	result := env.postConfig(map[string]any{
+		"resourceVersion": "1",
+		"webSearch":       map[string]string{"provider": "openrouter", "model": "anthropic/claude-haiku-4.5"},
+	})
+	if result.Status != http.StatusOK {
+		t.Fatalf("namespaced model status = %d, want 200 (body %s)", result.Status, result.Body)
+	}
+}
