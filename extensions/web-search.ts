@@ -51,10 +51,31 @@ const webSearchTool = defineTool({
             .map((part) => (part.type === "text" ? part.text : ""))
             .join("\n\n");
         const failed = Boolean((result.details as { error?: unknown } | undefined)?.error);
+        const reported = (result.details ?? {}) as Record<string, unknown>;
+
+        // The provider code reports what answered and whether anything was grounded. Pass the
+        // primitives on: the app shows them with the call, so "which model searched, and did it
+        // search at all" is answerable without reading the provider's response.
+        const details: Record<string, string | number | boolean> = {};
+        if (typeof reported.model === "string") details.model = reported.model;
+        if (typeof reported.providerKind === "string") details.provider = reported.providerKind;
+        if (typeof reported.resultCount === "number") details.results = reported.resultCount;
+        if (typeof reported.grounded === "boolean") details.grounded = reported.grounded;
+
+        // Whether a search happens is the model's decision: a search-capable model may answer a
+        // vague question from memory with no search at all, which looks like a search that worked.
+        // Say when nothing came back, and name what answered, so a mis-set web-search.json or a
+        // provider without a search tool is visible instead of silent.
+        let answer = text || "No result.";
+        if (!failed && details.grounded !== true) {
+            const searched = details.model === undefined ? "the configured model" : details.model;
+            answer += `\n\n(No search results came back from ${searched}: it did not search, or that provider has no web search tool.)`;
+        }
 
         return {
-            content: [{ type: "text" as const, text: text || "No result." }],
+            content: [{ type: "text" as const, text: answer }],
             ...(failed ? { isError: true } : {}),
+            ...(Object.keys(details).length > 0 ? { details } : {}),
         };
     },
 });

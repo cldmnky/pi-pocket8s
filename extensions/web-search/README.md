@@ -36,11 +36,36 @@ uses — wins when it exists:
 ```
 
 Without it, the tool picks the highest-ranked *available* model from an
-allow-list of providers whose wire format the vendored code implements
-(`select.ts`). An OpenAI-compatible gateway is deliberately **not** picked on its
-own: OpenRouter answers with Anthropic's and OpenAI's shapes without implementing
-either provider's search tool, so it must be named explicitly. The fallback is a
-guess; pin the model you want.
+allow-list of providers this build has verified (`select.ts`). A gateway is
+never picked on its own: it serves many providers behind one endpoint under
+whichever api shape it advertises, and whether it implements that provider's
+search tool is per-gateway. Naming one explicitly works — OpenRouter's
+Anthropic-shaped models were verified to run the search tool — it is just not a
+safe default. The fallback is a guess either way; pin the model you want.
+
+## Which engine answers, and whether it searched
+
+There is no separate engine switch: the **provider of the chosen model runs the
+search**, in its own way — Google Search grounding for Gemini, the OpenAI
+Responses `web_search` tool for OpenAI/Codex and for OpenCode Zen/Go's Responses
+models, xAI's search for Grok, Anthropic's `web_search` tool (and DeepSeek's
+Anthropic-compatible one), Ollama Cloud's `/api/web_search`. Choosing
+`google-generative-ai` vs `openai-codex` is choosing the search backend.
+
+Every result carries details that say what answered:
+
+| Detail | Meaning |
+| --- | --- |
+| `model` | the model that ran the search |
+| `provider` | the dialect used (`google`, `openai`, `xai`, `anthropic`, `deepseek`, `ollama`) |
+| `grounded` | whether search results actually came back |
+| `results` | how many were found |
+
+Whether to search is the **model's** decision: asked something vague
+("anything"), a search-capable model answered from memory with
+`grounded: false` rather than searching. The tool then appends a short line to
+the answer so that this — and a model whose provider has no search tool — is not
+mistaken for a search that worked.
 
 Costs, from the operator's account: a search is a model call on the search
 provider, and the result text then goes to the model the conversation is using.

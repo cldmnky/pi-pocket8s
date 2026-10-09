@@ -248,9 +248,17 @@ workspace home:
 ```
 
 With no such file the tool picks the highest-ranked available model from an allow-list of
-providers whose wire format it implements. An OpenAI-compatible gateway (OpenRouter, for one) is
-not picked automatically even when it advertises a supported api, because it does not implement
-that provider's search tool; name one explicitly to use it.
+providers it has been verified against. A gateway (OpenRouter, for one) is never picked on its own:
+it serves many providers behind one endpoint, and whether it implements a given provider's search
+tool is per-gateway. Naming one explicitly works — OpenRouter's Anthropic-shaped models were
+verified to run the search tool — it is just not a safe default.
+
+There is no separate engine switch: **the provider of the chosen model runs the search**, in its own
+way (Google Search grounding for Gemini, the Responses `web_search` tool for OpenAI/Codex, xAI's
+search for Grok, Anthropic's tool, Ollama Cloud's search API). Picking the provider picks the
+backend. Every result also reports which model answered and whether search results actually came
+back, because a search-capable model may decide *not* to search — and that should not look like a
+success.
 
 Costs and access: a search is a **billable model call on the install's own provider credentials**
 (the same `auth.json` the agent uses), and the result text is then sent to the model the

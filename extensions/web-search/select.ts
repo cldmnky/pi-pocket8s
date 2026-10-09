@@ -8,13 +8,13 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { getProviderKind } from "./vendor/providers/config.ts";
 
 /**
- * Providers whose native search API the vendored code calls correctly, most preferred first.
+ * Providers whose native search API this build has verified, most preferred first.
  *
- * Deliberately a provider/api allow-list and not a guess from the api name: an OpenAI-compatible
- * gateway reports an api it does not implement the same way (OpenRouter answers with Anthropic's
- * message shape and OpenAI's completions shape without implementing either provider's search
- * tool), so it is never picked on its own. Set `provider` and `model` in `web-search.json` to use
- * one anyway.
+ * Deliberately a provider/api allow-list, not a guess from the api name: a gateway serves many
+ * providers behind one endpoint under whichever api shape it advertises, and whether it implements
+ * that provider's search tool is per-gateway and unverified here. Naming one in `web-search.json`
+ * is allowed — OpenRouter's Anthropic-shaped models were verified to run the search tool — it is
+ * just never chosen on its own. The result's `grounded` detail says whether a search happened.
  */
 export const PREFERRED: ReadonlyArray<{ provider: string; api?: string; model?: string }> = [
     { provider: "openai-codex", api: "openai-codex-responses" },
