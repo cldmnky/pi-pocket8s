@@ -117,6 +117,7 @@ jobs:
           set -euo pipefail
           docker volume rm -f smoke-home smoke-repos >/dev/null 2>&1 || true
           docker run --detach --name smoke --publish 127.0.0.1:8787:8787 --publish 127.0.0.1:8081:8081 \
+            --tmpfs /run/user/1000:rw,nosuid,nodev,mode=1777 \
             --env POCKET_FRAME_ANCESTORS=https://portal.example.com \
             --env TERMINAL_FRAME_ANCESTORS=https://portal.example.com \
             --volume smoke-home:/workspace/home \
@@ -214,6 +215,16 @@ jobs:
           docker exec --workdir /opt/pi-pocket smoke node -e 'import("jiti").then(() => console.log("jiti ok"))'
           docker exec smoke rg --version
           docker exec smoke chromium --version
+          docker exec smoke agent-browser --version
+          # agent-browser drives the bundled headless Chromium over CDP: open a
+          # page in an isolated session, snapshot it, screenshot it, then close.
+          # /run/user/1000 is the chart's emptyDir in-cluster; the smoke run
+          # mounts an equivalent tmpfs so the daemon has a socket directory.
+          docker exec -e AGENT_BROWSER_SESSION=smoke smoke agent-browser open https://example.com | grep -q 'Example Domain'
+          docker exec -e AGENT_BROWSER_SESSION=smoke smoke agent-browser snapshot -i | grep -q 'Learn more'
+          docker exec -e AGENT_BROWSER_SESSION=smoke smoke agent-browser screenshot /tmp/agent-browser-smoke.png
+          docker exec smoke test -s /tmp/agent-browser-smoke.png
+          docker exec -e AGENT_BROWSER_SESSION=smoke smoke agent-browser close
           docker exec smoke kubectl version --client
           docker exec smoke helm version
           docker exec smoke oc version --client
