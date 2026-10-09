@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -44,10 +45,21 @@ type Auth struct {
 	pending  map[[32]byte]pending
 	sessions map[[32]byte]session
 	now      func() time.Time
+	log      *slog.Logger
 }
 
-func New(provider Provider, origin string) *Auth {
-	return &Auth{provider: provider, origin: origin, pending: map[[32]byte]pending{}, sessions: map[[32]byte]session{}, now: time.Now}
+func New(provider Provider, origin string, loggers ...*slog.Logger) *Auth {
+	logger := slog.New(slog.DiscardHandler)
+	if len(loggers) > 0 && loggers[0] != nil {
+		logger = loggers[0]
+	}
+	return &Auth{provider: provider, origin: origin, pending: map[[32]byte]pending{}, sessions: map[[32]byte]session{}, now: time.Now, log: logger}
+}
+
+// Log fixed stages/reasons only. Provider errors and request query/cookies may
+// contain credentials and must never be attached to OAuth diagnostic events.
+func (a *Auth) failure(stage, reason string) {
+	a.log.Warn("github oauth", "stage", stage, "outcome", "failed", "reason", reason)
 }
 func randomValue() string {
 	var raw [32]byte
@@ -83,11 +95,13 @@ func (a *Auth) Start(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(a.pending) >= maxEntries {
 		a.mu.Unlock()
+		a.failure("start", "capacity")
 		http.Error(w, "Too many login attempts", http.StatusTooManyRequests)
 		return
 	}
 	a.pending[key(transaction)] = pending{state, verifier, a.now().Add(10 * time.Minute)}
 	a.mu.Unlock()
+	a.log.Info("github oauth", "stage", "start", "outcome", "redirect")
 	setCookie(w, oauthCookie, transaction, 600)
 	http.Redirect(w, r, a.provider.AuthorizationURL(a.origin+"/auth/github/callback", state, verifier), http.StatusFound)
 }
@@ -95,6 +109,7 @@ func (a *Auth) Start(w http.ResponseWriter, r *http.Request) {
 func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie(oauthCookie)
 	if err != nil {
+		a.failure("transaction", "missing_cookie")
 		http.Error(w, "Invalid login transaction", http.StatusBadRequest)
 		return
 	}
@@ -104,6 +119,7 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 	a.mu.Unlock()
 	setCookie(w, oauthCookie, "", -1)
 	if !ok || !a.now().Before(p.expires) || len(r.URL.Query()["state"]) != 1 || len(r.URL.Query()["code"]) != 1 || r.URL.Query().Get("state") != p.state || r.URL.Query().Get("code") == "" || len(r.URL.Query().Get("code")) > 4096 {
+		a.failure("transaction", "invalid_or_expired")
 		http.Error(w, "Invalid or expired login transaction", http.StatusBadRequest)
 		return
 	}
@@ -111,6 +127,11 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	user, err := a.provider.Login(ctx, r.URL.Query().Get("code"), a.origin+"/auth/github/callback", p.verifier)
 	if err != nil {
+		reason := "provider_unavailable"
+		if errors.Is(err, githubapp.ErrDenied) {
+			reason = "access_denied"
+		}
+		a.failure("identity_and_membership", reason)
 		http.Error(w, "GitHub login denied or unavailable", http.StatusForbidden)
 		return
 	}
@@ -119,6 +140,7 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 	a.prune()
 	if len(a.sessions) >= maxEntries {
 		a.mu.Unlock()
+		a.failure("session", "capacity")
 		http.Error(w, "Too many sessions", http.StatusTooManyRequests)
 		return
 	}
@@ -127,6 +149,7 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 	a.sessions[key(token)] = session{user, a.now().Add(8 * time.Hour), a.now()}
 	a.mu.Unlock()
+	a.log.Info("github oauth", "stage", "session", "outcome", "authenticated")
 	setCookie(w, SessionCookie, token, 8*60*60)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

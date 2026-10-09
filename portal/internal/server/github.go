@@ -23,7 +23,7 @@ type GitHubProvider interface {
 // fallback is deliberately disabled in this mode, rather than being an SSO bypass.
 func (s *Server) EnableGitHub(client GitHubProvider) {
 	s.github = client
-	s.sessions = githubauth.New(client, s.cfg.PortalOrigin)
+	s.sessions = githubauth.New(client, s.cfg.PortalOrigin, s.log)
 }
 
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {

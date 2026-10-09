@@ -100,3 +100,20 @@ same-named repositories across owners, per-repository cache renewal, owner
 mismatches, suspended installations, malformed mappings, and Helm propagation
 without changing the login gate. Personal-account installation and live-cluster
 rollout have not been verified in this change.
+
+## Portal post-login rendering regression (2026-10-09)
+
+After deploying the merged web-search UI, live logs showed repeated successful
+OAuth callbacks (`303`), session checks (`200`), and authenticated configuration
+reads (`200`), with no subsequent status request. The web-search input IDs were
+missing from the SPA element cache, so rendering configuration threw before
+loading deployment status. A broad initialization catch mislabeled this as
+"Authentication unavailable". Registering both inputs fixes the rendering error;
+a DOM/cache contract test guards against recurrence. Workspace-load errors now
+have a separate message from authentication-bootstrap failures.
+
+OAuth diagnostics log fixed stage/outcome/reason fields, not raw provider
+errors, authorization codes, state/verifiers, cookies, or callback query strings.
+Identity exchange and membership validation share a provider operation and are
+reported as one `identity_and_membership` stage. Tests assert success/failure
+events and absence of transaction/session secrets and provider error details.

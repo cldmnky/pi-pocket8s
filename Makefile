@@ -17,7 +17,7 @@ test:
 	$(PYTHON) tests/test_chart.py
 	cd portal && go test -race ./...
 	cd terminal && go test -race ./...
-	@shopt -s nullglob; tests=(images/*.test.mjs extensions/*.test.mjs); \
+	@shopt -s nullglob; tests=(images/*.test.mjs extensions/*.test.mjs portal/web/*.test.mjs); \
 	if [ $${#tests[@]} -gt 0 ]; then node --test "$${tests[@]}"; fi
 
 dry-run:

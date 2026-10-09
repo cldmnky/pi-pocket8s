@@ -30,7 +30,7 @@
     'agent-frame', 'frame-wrap', 'workspace-fullscreen', 'workspace-external', 'workspace-terminal', 'workspace-reload',
     'status-state', 'status-ready', 'status-restarted',
     'action-start', 'action-stop', 'action-restart', 'action-refresh',
-    'api-key-rows', 'authorized-keys', 'known-hosts',
+    'api-key-rows', 'authorized-keys', 'known-hosts', 'web-search-provider', 'web-search-model',
     'save-config', 'reload-config', 'pocket-link'
   ];
 
@@ -567,17 +567,22 @@
       elements['token-form'].hidden = session.mode === 'github';
       elements['token-help'].hidden = session.mode === 'github';
       if (session.mode === 'github' && session.authenticated) {
-        await refreshConfig();
-        await refreshStatus();
-        var integration = await api('GET', '/api/github/status');
-        elements['github-integration'].hidden = !integration.enabled;
-        elements['github-repositories'].textContent = 'Allowed repositories: ' + (integration.repositories || []).join(', ');
-        elements['github-user'].textContent = session.login;
-        elements['github-session'].hidden = false;
-        elements.unlock.hidden = true;
-        elements.app.hidden = false;
-        selectTab('workspace');
-        loadFrame();
+        try {
+          await refreshConfig();
+          await refreshStatus();
+          var integration = await api('GET', '/api/github/status');
+          elements['github-integration'].hidden = !integration.enabled;
+          elements['github-repositories'].textContent = 'Allowed repositories: ' + (integration.repositories || []).join(', ');
+          elements['github-user'].textContent = session.login;
+          elements['github-session'].hidden = false;
+          elements.unlock.hidden = true;
+          elements.app.hidden = false;
+          selectTab('workspace');
+          loadFrame();
+        } catch (err) {
+          // Login succeeded; a config/render failure is not an OAuth failure.
+          setMessage('Signed in, but workspace loading failed. Refresh to retry.', 'error');
+        }
       }
     } catch (err) {
       setMessage('Authentication unavailable. Refresh to retry.', 'error');
