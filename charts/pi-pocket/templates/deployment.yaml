@@ -48,6 +48,8 @@ spec:
           ports:
             - name: http
               containerPort: 8787
+            - name: terminal
+              containerPort: 8081
           securityContext:
             {{- if and .Values.openshift.enabled (eq .Values.openshift.pocketSCC "nested-container") }}
             allowPrivilegeEscalation: true
@@ -80,6 +82,10 @@ spec:
               value: {{ printf "https://%s" .Values.ingress.pocketHost | quote }}
             {{- if .Values.portal.enabled }}
             - name: POCKET_FRAME_ANCESTORS
+              value: {{ printf "https://%s" .Values.ingress.portalHost | quote }}
+            {{- end }}
+            {{- if .Values.portal.enabled }}
+            - name: TERMINAL_FRAME_ANCESTORS
               value: {{ printf "https://%s" .Values.ingress.portalHost | quote }}
             {{- end }}
             {{- if include "pocket.githubEnabled" . }}

@@ -86,6 +86,17 @@ The patch is fail-closed: unless each pattern is found exactly as often as the
 pinned upstream commit has it (once / twice), nothing is modified and boot
 continues without embedding. `Secure` cookies still require HTTPS.
 
+### Web terminal daemon
+
+`/usr/local/bin/pi-terminal` (built from `terminal/` into the image) serves
+the ghostty-web frontend and one-PTY-per-WebSocket shells on port 8081
+(`TERMINAL_PORT`). The entrypoint starts it next to the launcher, supervises
+both, and lets the launcher own the container exit code; a crashed daemon is
+restarted after 5 s. Authentication re-reads the owner token from
+`~/.pi-pocket/config.json` on every check, so rotation needs no restart.
+`TERMINAL_FRAME_ANCESTORS` (chart: portal origin) controls which origin may
+embed the page; empty denies all framing.
+
 ### Owner sign-in token
 
 The launcher writes the owner's sign-in link to its output; that token is the owner's key,

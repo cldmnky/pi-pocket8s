@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="dark">
+<title>pi-pocket terminal</title>
+<link rel="stylesheet" href="/terminal.css">
+</head>
+<body>
+<header class="term-header">
+  <h1>pi-pocket terminal</h1>
+  <p id="term-status" class="term-status" role="status" aria-live="polite">Connecting&hellip;</p>
+  <div class="term-actions">
+    <button type="button" id="term-new" hidden>New shell</button>
+    <button type="button" id="term-fullscreen">Full screen</button>
+  </div>
+</header>
+<main id="term-wrap" class="term-wrap">
+  <div id="term-container" class="term-container" aria-label="Terminal"></div>
+  <div id="term-overlay" class="term-overlay" hidden>
+    <p id="term-overlay-text"></p>
+    <button type="button" id="term-reconnect">New shell</button>
+  </div>
+</main>
+<script type="module" src="/terminal.js"></script>
+</body>
+</html>

@@ -7,6 +7,7 @@ ingress:
   className: openshift-default
   pocketHost: pocket.apps.voyager.blahonga.me
   portalHost: pocket-portal.apps.voyager.blahonga.me
+  terminalHost: pocket-terminal.apps.voyager.blahonga.me
 openshift:
   enabled: true
   pocketSCC: nested-container

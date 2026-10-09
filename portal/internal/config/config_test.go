@@ -11,7 +11,7 @@ func setEnv(t *testing.T, values map[string]string) {
 	t.Helper()
 	for _, key := range []string{
 		"POD_NAMESPACE", "POCKET_DEPLOYMENT", "CONFIG_SECRET",
-		"POCKET_URL", "PORTAL_ORIGIN", "PORTAL_TOKEN_FILE", "POCKET_NAMESPACE", "PORTAL_AUTH_MODE", "POCKET_SERVICE_ACCOUNT", "GITHUB_CLIENT_ID", "GITHUB_APP_ID", "GITHUB_INSTALLATION_ID", "GITHUB_ORGANIZATION", "GITHUB_TEAM", "GITHUB_REPOSITORIES", "GITHUB_CLIENT_SECRET", "GITHUB_CLIENT_SECRET_FILE", "GITHUB_APP_PRIVATE_KEY_FILE",
+		"POCKET_URL", "TERMINAL_URL", "PORTAL_ORIGIN", "PORTAL_TOKEN_FILE", "POCKET_NAMESPACE", "PORTAL_AUTH_MODE", "POCKET_SERVICE_ACCOUNT", "GITHUB_CLIENT_ID", "GITHUB_APP_ID", "GITHUB_INSTALLATION_ID", "GITHUB_ORGANIZATION", "GITHUB_TEAM", "GITHUB_REPOSITORIES", "GITHUB_CLIENT_SECRET", "GITHUB_CLIENT_SECRET_FILE", "GITHUB_APP_PRIVATE_KEY_FILE",
 	} {
 		value := values[key]
 		t.Setenv(key, value)
@@ -104,6 +104,8 @@ func TestFromEnvRejectsInvalid(t *testing.T) {
 		{"pocket url http", func(env map[string]string) { env["POCKET_URL"] = "http://pi.example.com" }, "POCKET_URL"},
 		{"pocket url userinfo", func(env map[string]string) { env["POCKET_URL"] = "https://user@pi.example.com" }, "POCKET_URL"},
 		{"pocket url query", func(env map[string]string) { env["POCKET_URL"] = "https://pi.example.com/?debug=1" }, "POCKET_URL"},
+		{"terminal url http", func(env map[string]string) { env["TERMINAL_URL"] = "http://terminal.example.com" }, "TERMINAL_URL"},
+		{"terminal url query", func(env map[string]string) { env["TERMINAL_URL"] = "https://terminal.example.com/?debug=1" }, "TERMINAL_URL"},
 		{"missing origin", func(env map[string]string) { env["PORTAL_ORIGIN"] = "" }, "PORTAL_ORIGIN"},
 		{"origin http", func(env map[string]string) { env["PORTAL_ORIGIN"] = "http://portal.example.com" }, "PORTAL_ORIGIN"},
 		{"origin with path", func(env map[string]string) { env["PORTAL_ORIGIN"] = "https://portal.example.com/portal" }, "PORTAL_ORIGIN"},

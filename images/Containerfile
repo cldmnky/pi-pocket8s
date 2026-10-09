@@ -33,6 +33,17 @@ RUN set -eux; \
     test -f bin/pi-pocket.js; \
     rm -rf /src/pi-pocket/.git
 
+# ── terminal daemon (Go, static; ghostty-web frontend is vendored) ──
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.24 AS terminal-build
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /src
+COPY terminal/go.mod terminal/go.sum ./
+RUN go mod download
+COPY terminal/ ./
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} \
+    go build -trimpath -ldflags="-s -w" -o /out/pi-terminal .
+
 # ── runtime image ─────────────────────────────────────────────────────────────────
 FROM ${BASE_IMAGE}
 
@@ -229,6 +240,8 @@ RUN set -eux; \
 
 COPY images/github-credentials.mjs /usr/local/bin/gh
 RUN chmod 0755 /usr/local/bin/gh
+COPY --from=terminal-build /out/pi-terminal /usr/local/bin/pi-terminal
+RUN chmod 0755 /usr/local/bin/pi-terminal
 COPY images/entrypoint.sh /usr/local/bin/pi-pocket-entrypoint
 COPY images/embed-patch.sh /usr/local/bin/pi-pocket-embed-patch
 COPY images/log-filter.mjs /usr/local/bin/pi-pocket-log-filter

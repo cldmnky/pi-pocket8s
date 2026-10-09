@@ -25,6 +25,9 @@ func TestStatusEndpoint(t *testing.T) {
 	if status.PocketURL != "https://pi.example.com" {
 		t.Errorf("pocketUrl = %q", status.PocketURL)
 	}
+	if status.TerminalURL != "https://terminal.example.com" {
+		t.Errorf("terminalUrl = %q", status.TerminalURL)
+	}
 	if status.RestartedAt != "" {
 		t.Errorf("restartedAt = %q, want empty before any restart", status.RestartedAt)
 	}

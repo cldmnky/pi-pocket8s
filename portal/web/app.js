@@ -25,7 +25,7 @@
     'github-login', 'github-session', 'github-user', 'github-logout', 'github-integration', 'github-repositories', 'token-help',
     'tab-workspace', 'tab-configure', 'panel-workspace', 'panel-configure',
     'owner-card', 'owner-missing', 'owner-link', 'owner-open', 'owner-copy', 'owner-qr',
-    'agent-frame', 'frame-wrap', 'workspace-fullscreen', 'workspace-external', 'workspace-reload',
+    'agent-frame', 'frame-wrap', 'workspace-fullscreen', 'workspace-external', 'workspace-terminal', 'workspace-reload',
     'status-state', 'status-ready', 'status-restarted',
     'action-start', 'action-stop', 'action-restart', 'action-refresh',
     'api-key-rows', 'authorized-keys', 'known-hosts',
@@ -191,6 +191,37 @@
     // window's location/reload method is not.
     frame.setAttribute('src', target);
   }
+
+  // The terminal daemon authenticates with the same owner token that signs
+  // into pi-pocket; the token travels in the link, never in page storage.
+  function terminalURL() {
+    if (state.config === null || typeof state.config.terminalUrl !== 'string' || state.config.terminalUrl === '') {
+      return '';
+    }
+    if (typeof state.ownerLoginUrl !== 'string' || state.ownerLoginUrl === '') {
+      return '';
+    }
+    var token = '';
+    try {
+      token = new URL(state.ownerLoginUrl).searchParams.get('token') || '';
+    } catch (err) {
+      token = '';
+    }
+    if (token === '') {
+      return '';
+    }
+    return state.config.terminalUrl.replace(/\/$/, '') + '/?token=' + encodeURIComponent(token);
+  }
+
+  function openTerminal() {
+    var target = terminalURL();
+    if (target === '') {
+      setMessage('The terminal is not available yet: it needs the terminal URL and the synced owner sign-in link.', 'error');
+      return;
+    }
+    window.open(target, '_blank', 'noopener');
+  }
+
 
   async function unlock(event) {
     event.preventDefault();
@@ -562,6 +593,7 @@
       }
       window.open(target, '_blank', 'noopener');
     });
+    elements['workspace-terminal'].addEventListener('click', openTerminal);
     elements['workspace-reload'].addEventListener('click', function () { loadFrame(); });
     elements['action-start'].addEventListener('click', function () { deploymentAction('start'); });
     elements['action-stop'].addEventListener('click', function () { deploymentAction('stop'); });

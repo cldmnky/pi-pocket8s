@@ -85,7 +85,7 @@ class ChartTests(unittest.TestCase):
         docs = render("--set", "persistence.existingClaim=repos", "--set", "runtimeSecret.existingSecret=config", "--set", "portal.tokenSecret=access")
         self.assertFalse(any(item["kind"] in ("Secret", "PersistentVolumeClaim") for item in docs))
         ingresses = [item for item in docs if item["kind"] == "Ingress"]
-        self.assertEqual(len(ingresses), 2)
+        self.assertEqual(len(ingresses), 3)
         for ingress in ingresses:
             self.assertEqual(ingress["spec"]["ingressClassName"], "openshift-default")
             # No tls stanza without an explicit Secret: an empty one blocks
@@ -93,10 +93,31 @@ class ChartTests(unittest.TestCase):
             self.assertNotIn("tls", ingress["spec"])
             self.assertEqual(ingress["metadata"]["annotations"]["route.openshift.io/termination"], "edge")
             self.assertEqual(ingress["metadata"]["annotations"]["route.openshift.io/insecureEdgeTerminationPolicy"], "Redirect")
-        docs = render("--set", "ingress.pocketTLSSecret=pocket-tls", "--set", "ingress.portalTLSSecret=portal-tls")
+        docs = render("--set", "ingress.pocketTLSSecret=pocket-tls", "--set", "ingress.portalTLSSecret=portal-tls", "--set", "ingress.terminalTLSSecret=terminal-tls")
         ingresses = [item for item in docs if item["kind"] == "Ingress"]
         self.assertEqual(ingresses[0]["spec"]["tls"][0]["secretName"], "pocket-tls")
         self.assertEqual(ingresses[1]["spec"]["tls"][0]["secretName"], "portal-tls")
+        self.assertEqual(ingresses[2]["spec"]["tls"][0]["secretName"], "terminal-tls")
+
+    def test_web_terminal_routing_and_env(self):
+        docs = render()
+        terminal_svc = find(docs, "Service", "pi-pocket-terminal")
+        self.assertEqual(terminal_svc["spec"]["ports"], [{"name": "terminal", "port": 8081, "targetPort": "terminal"}])
+        terminal_ingress = find(docs, "Ingress", "pi-pocket-terminal")
+        self.assertEqual(terminal_ingress["spec"]["rules"][0]["host"], "pocket-terminal.apps.voyager.blahonga.me")
+        self.assertEqual(terminal_ingress["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"],
+                         {"name": "pi-pocket-terminal", "port": {"name": "terminal"}})
+        policy = find(docs, "NetworkPolicy", "pi-pocket-ingress")
+        self.assertIn({"protocol": "TCP", "port": 8081}, policy["spec"]["ingress"][0]["ports"])
+        pocket = find(docs, "Deployment", "pi-pocket")["spec"]["template"]["spec"]["containers"][0]
+        self.assertIn({"name": "terminal", "containerPort": 8081}, pocket["ports"])
+        env = {item["name"]: item.get("value") for item in pocket["env"]}
+        self.assertEqual(env["TERMINAL_FRAME_ANCESTORS"], "https://pocket-portal.apps.voyager.blahonga.me")
+        portal = find(docs, "Deployment", "pi-pocket-portal")["spec"]["template"]["spec"]["containers"][0]
+        portal_env = {item["name"]: item.get("value") for item in portal["env"]}
+        self.assertEqual(portal_env["TERMINAL_URL"], "https://pocket-terminal.apps.voyager.blahonga.me")
+        with self.assertRaises(subprocess.CalledProcessError):
+            render("--set", "ingress.terminalHost=")
 
     def test_github_auto_mode_and_namespace_boundary(self):
         options = ["--set", "portal.namespace=management", "--set", "portal.github.clientID=client",
