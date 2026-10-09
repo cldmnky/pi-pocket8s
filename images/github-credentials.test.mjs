@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { createServer } from 'node:https';
-import { credential, repository, fromRemote, selectRepository } from './github-credentials.mjs';
+import { credential, repository, fromRemote, selectRepository, SetupError } from './github-credentials.mjs';
 
  test('repository selection is explicit, scoped and github.com-only', () => {
   assert.equal(repository('Example/Repo.git'), 'example/repo');
@@ -21,7 +21,34 @@ import { credential, repository, fromRemote, selectRepository } from './github-c
   assert.throws(() => selectRepository(['api', 'https://evil.example'], {}, () => ''));
   assert.throws(() => selectRepository(['api', '--hostname', 'evil.example', 'user'], {}, () => ''));
   assert.throws(() => selectRepository([], { GH_HOST: 'evil.example' }, () => ''));
+  // A clone-less directory is a setup problem, not a broker one: say which way out.
+  assert.throws(() => selectRepository(['auth', 'status'], {}, () => { throw new Error('not a git repository'); }), error => {
+    assert.ok(error instanceof SetupError);
+    assert.match(error.message, /No repository in scope/);
+    assert.match(error.message, /--repo owner\/name or GH_REPO=owner\/name/);
+    return true;
+  });
+  assert.throws(() => selectRepository(['auth', 'status'], {}, () => 'https://gitlab.com/example/repo.git'), /Only github.com/);
  });
+
+test('the CLI explains a missing repository instead of blaming the broker', async () => {
+ const dir = mkdtempSync(join(tmpdir(), 'pocket-github-norepo-'));
+ const tokenFile = join(dir, 'sa-token');
+ writeFileSync(tokenFile, 'projected-sa-token');
+ try {
+  // A broker URL is configured, so the wrapper does not fall through to the real gh; the run then
+  // has to resolve a repository before it can ask for a token, and this directory is not a clone.
+  const env = { ...process.env, GITHUB_BROKER_URL: 'https://broker.invalid/api/github/credentials', GITHUB_BROKER_TOKEN_FILE: tokenFile };
+  delete env.GH_REPO;
+  const child = spawn(process.execPath, [new URL('./github-credentials.mjs', import.meta.url).pathname, 'auth', 'status'], { cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let stderr = ''; child.stderr.on('data', data => stderr += data);
+  const code = await new Promise(resolve => child.on('exit', resolve));
+  assert.equal(code, 1);
+  assert.match(stderr, /No repository in scope/);
+  assert.doesNotMatch(stderr, /credential broker refused/, 'a setup problem must not be reported as a broker decision');
+  assert.doesNotMatch(stderr, /projected-sa-token/, 'never print the workspace token');
+ } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 
 test('TLS broker, rotating SA credentials, Git helper and no persistent GitHub tokens', async () => {
  const dir = mkdtempSync(join(tmpdir(), 'pocket-github-test-'));
