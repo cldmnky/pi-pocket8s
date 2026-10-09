@@ -10,8 +10,24 @@
 {{- end -}}
 {{- if not (regexMatch "^[a-zA-Z0-9][a-zA-Z0-9-]*$" .Values.portal.github.organization) -}}{{- fail "invalid GitHub organization" -}}{{- end -}}
 {{- if empty .Values.portal.github.repositories -}}{{- fail "portal.github.repositories must explicitly select repositories" -}}{{- end -}}
+{{- $installations := dict -}}
+{{- $installationOwners := dict (toString .Values.portal.github.installationID) (lower .Values.portal.github.organization) -}}
+{{- if not (kindIs "map" .Values.portal.github.repositoryInstallations) -}}{{- fail "portal.github.repositoryInstallations must map account names to installation IDs" -}}{{- end -}}
+{{- if gt (len .Values.portal.github.repositoryInstallations) 500 -}}{{- fail "select at most 500 repository installations" -}}{{- end -}}
+{{- range $owner, $id := .Values.portal.github.repositoryInstallations -}}
+{{- if or (not (regexMatch "^[a-zA-Z0-9][a-zA-Z0-9-]*$" $owner)) (not (regexMatch "^[1-9][0-9]*$" (toString $id))) (le (int64 $id) 0) -}}{{- fail "repository installations must map account names to positive installation IDs" -}}{{- end -}}
+{{- $owner = lower $owner -}}
+{{- if hasKey $installations $owner -}}{{- fail "duplicate GitHub repository owner" -}}{{- end -}}
+{{- $idKey := toString (int64 $id) -}}
+{{- if and (hasKey $installationOwners $idKey) (ne (get $installationOwners $idKey) $owner) -}}{{- fail "GitHub installation cannot belong to multiple owners" -}}{{- end -}}
+{{- if and (eq $owner (lower $.Values.portal.github.organization)) (ne $idKey (toString $.Values.portal.github.installationID)) -}}{{- fail "organization repositories must use the membership installation" -}}{{- end -}}
+{{- $_ := set $installations $owner (int64 $id) -}}
+{{- $_ := set $installationOwners $idKey $owner -}}
+{{- end -}}
 {{- range .Values.portal.github.repositories -}}
-{{- if not (regexMatch (printf "(?i)^%s/[a-z0-9][a-z0-9_.-]*$" $.Values.portal.github.organization) .) -}}{{- fail "GitHub repositories must belong to the configured organization" -}}{{- end -}}
+{{- if or (not (regexMatch "(?i)^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9_.-]*$" .)) (hasSuffix ".git" (lower .)) -}}{{- fail "GitHub repositories must be owner/name without .git" -}}{{- end -}}
+{{- $owner := lower (index (splitList "/" .) 0) -}}
+{{- if and (ne $owner (lower $.Values.portal.github.organization)) (not (hasKey $installations $owner)) -}}{{- fail "repository owner requires an explicitly configured installation" -}}{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- if not (has (int .Values.replicas) (list 0 1)) -}}

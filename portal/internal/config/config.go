@@ -2,6 +2,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -85,6 +86,11 @@ func FromEnv() (Config, error) {
 			}
 		}
 		cfg.GitHub = githubapp.Options{AppID: appID, InstallationID: installationID, ClientID: os.Getenv("GITHUB_CLIENT_ID"), ClientSecret: strings.TrimSpace(string(secret)), PrivateKeyFile: privateKeyFile, Organization: os.Getenv("GITHUB_ORGANIZATION"), Team: os.Getenv("GITHUB_TEAM"), Repositories: strings.FieldsFunc(os.Getenv("GITHUB_REPOSITORIES"), func(r rune) bool { return r == ',' })}
+		if raw := os.Getenv("GITHUB_REPOSITORY_INSTALLATIONS"); raw != "" {
+			if err := json.Unmarshal([]byte(raw), &cfg.GitHub.RepositoryInstallations); err != nil || cfg.GitHub.RepositoryInstallations == nil {
+				return Config{}, fmt.Errorf("GITHUB_REPOSITORY_INSTALLATIONS must be a JSON object of account names to numeric installation IDs")
+			}
+		}
 	}
 	if cfg.TokenFile == "" {
 		cfg.TokenFile = DefaultTokenFile

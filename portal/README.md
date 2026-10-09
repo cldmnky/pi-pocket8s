@@ -52,7 +52,13 @@ portal's own CSP permits `frame-src` for the configured agent origin only.
   scoped to one allow-listed repository with `contents: write`,
   `pull_requests: write`, and `actions: write` (never `workflows` or
   `administration`). Tokens are cached until five minutes before expiry and
-  renewed transparently.
+  renewed transparently. The login organization's installation remains separate
+  from explicitly configured repository-owner installations of the same App,
+  including personal accounts. Each installation's account is validated before
+  first use; suspended or mismatched installations are rejected. Authorization and
+  caches use the full `owner/name`, so same-named repositories on different
+  accounts do not share tokens. All workspace steering users share these bot
+  permissions; browser login never delegates personal credentials.
 - **TLS-verified Kubernetes API.** The server talks to the in-cluster API
   server using `KUBERNETES_SERVICE_HOST`/`KUBERNETES_SERVICE_PORT`, verifies
   the server certificate against the projected CA bundle, and re-reads the
@@ -93,11 +99,12 @@ portal's own CSP permits `frame-src` for the configured agent origin only.
 | `POCKET_NAMESPACE` | no | Workspace namespace when the portal runs in a separate management namespace (required in GitHub mode). |
 | `PORTAL_AUTH_MODE` | no | `auto` (default), `token`, or `github`; `auto` selects GitHub when `GITHUB_CLIENT_ID` is set. |
 | `POCKET_SERVICE_ACCOUNT` | GitHub mode | Workspace service account accepted by the credential broker. |
-| `GITHUB_APP_ID` / `GITHUB_INSTALLATION_ID` | GitHub mode | Numeric GitHub App and installation IDs. |
+| `GITHUB_APP_ID` / `GITHUB_INSTALLATION_ID` | GitHub mode | Numeric GitHub App ID and login organization's installation ID (membership checks and its repositories). |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub mode | App OAuth client credentials (secret from env or `/run/github-app/client-secret`). |
 | `GITHUB_APP_PRIVATE_KEY_FILE` | no | App private key path, default `/run/github-app/private-key.pem`. |
 | `GITHUB_ORGANIZATION` / `GITHUB_TEAM` | GitHub mode | Membership gate; team optional. |
-| `GITHUB_REPOSITORIES` | GitHub mode | Comma-separated `org/name` allow-list for bot tokens. |
+| `GITHUB_REPOSITORIES` | GitHub mode | Comma-separated `owner/name` allow-list for bot tokens; no wildcards. |
+| `GITHUB_REPOSITORY_INSTALLATIONS` | no | JSON object mapping additional repository owners to numeric installation IDs of the same App, e.g. `{"cldmnky":789012}`. Empty/unset preserves organization-only access. Foreign owners require an explicit mapping; this does not replace the repository allow-list or change the login gate. |
 
 `PORTAL_ORIGIN` is canonicalized (lower-case host, default `:443` removed) so
 browser `Origin` headers match exactly.

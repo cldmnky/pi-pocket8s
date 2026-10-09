@@ -79,6 +79,12 @@ spec:
               value: {{ .Values.portal.github.team | quote }}
             - name: GITHUB_REPOSITORIES
               value: {{ join "," .Values.portal.github.repositories | quote }}
+            - name: GITHUB_REPOSITORY_INSTALLATIONS
+              {{- $installations := dict }}
+              {{- range $owner, $id := .Values.portal.github.repositoryInstallations }}
+              {{- $_ := set $installations (lower $owner) (int64 $id) }}
+              {{- end }}
+              value: {{ toJson $installations | quote }}
             {{- end }}
             - name: POCKET_DEPLOYMENT
               value: {{ include "pocket.fullname" . }}
