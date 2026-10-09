@@ -215,6 +215,12 @@ Details in `images/README.md` ("Browser automation for agents"). The browser
 and `--no-sandbox` are preconfigured; `agent-browser install` must not be run
 (it would download a second browser).
 
+In any session, `/agent-browser <task>` (e.g. `/agent-browser open the staging
+dashboard and screenshot the deploy status`) runs the task through the CLI,
+following the seeded `agent-browser` skill (`/skill:agent-browser` forces it).
+The command and skill are seeded from the image into `~/.pi/agent/` on pod
+boot — see `pi-agent/README.md`.
+
 ### Provider OAuth (browser) logins
 
 Interactive provider logins (e.g. OpenAI with a browser) start a `localhost`

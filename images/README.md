@@ -143,6 +143,16 @@ Conventions for agents in this pod:
 - Provider OAuth logins done through the browser persist like manual logins —
   see the root README's provider-login section.
 
+### Seeded Pi skill and prompt template
+
+`/usr/share/pi-agent/` holds the Pi configuration shipped in the image
+(`pi-agent/` in this repo): the `agent-browser` skill and the
+`/agent-browser` prompt template. The entrypoint copies each into
+`~/.pi/agent/` on boot when it is not already there, so every session gets
+the `/agent-browser …` slash command with no further setup. In-pod edits
+survive restarts; deleting a file re-seeds the shipped copy on the next pod
+start, which is also how updates reach an existing volume.
+
 ## Pod security profiles
 
 The chart runs two profiles; the image supports both.

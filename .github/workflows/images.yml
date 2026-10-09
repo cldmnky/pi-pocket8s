@@ -148,6 +148,11 @@ jobs:
           docker exec smoke test -d /workspace/home/.ssh
           docker exec smoke sh -c 'test ! -e /workspace/home/.kube/config'
 
+          # The entrypoint seeds the shipped Pi skill and /agent-browser prompt
+          # template into the workspace home (copy-if-missing).
+          docker exec smoke test -f /workspace/home/.pi/agent/skills/agent-browser/SKILL.md
+          docker exec smoke test -f /workspace/home/.pi/agent/prompts/agent-browser.md
+
           # Nested-container Podman support: vfs storage, a subuid/subgid range inside
           # the pod's outer 65536-uid mapping, and setuid/filecap helper binaries.
           docker exec smoke sh -c 'grep -q "driver = \"vfs\"" /etc/containers/storage.conf'
