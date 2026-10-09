@@ -28,20 +28,41 @@ unmodified, so it can be diffed against a later release.
 
 ## Choosing the search model
 
-`~/.pi/agent/web-search.json` — the same file and format the upstream package
-uses — wins when it exists:
+The tool does it: **`web_search_config`**, next to `web_search` in a session.
+
+| Call | Effect |
+| --- | --- |
+| `{action:"show"}` (default) | what searches now, and whether the pin still resolves |
+| `{action:"list"}` | the verified search models available on this install |
+| `{action:"set", model:"gpt-5.6-sol"}` | pin it; `provider` only needed when several providers offer that model |
+| `{action:"clear"}` | back to automatic |
+
+So a person asks in plain words — "use Gemini for web searches", "which model is
+searching?" — and the agent calls the tool. Setting one is idempotent, validated
+against the models the install actually has, and reported back with what it will
+now use; a stale or unusable pin is reported rather than left to fail quietly.
+
+The same thing by hand, in `~/.pi/agent/web-search.json` — the file upstream's
+format already uses, read on every search, so no restart:
 
 ```json
 { "provider": "opencode-go", "model": "muse-spark-1.3-contributor" }
 ```
 
-Without it, the tool picks the highest-ranked *available* model from an
-allow-list of providers this build has verified (`select.ts`). A gateway is
-never picked on its own: it serves many providers behind one endpoint under
-whichever api shape it advertises, and whether it implements that provider's
-search tool is per-gateway. Naming one explicitly works — OpenRouter's
+`PI_WEB_SEARCH_CONFIG` moves that file elsewhere. Without a pin, the tool picks
+the highest-ranked *available* model from a verified allow-list (`select.ts`). A
+gateway is never picked on its own: it serves many providers behind one endpoint
+under whichever api shape it advertises, and whether it implements that
+provider's search tool is per-gateway. Naming one explicitly works — OpenRouter's
 Anthropic-shaped models were verified to run the search tool — it is just not a
-safe default. The fallback is a guess either way; pin the model you want.
+safe default.
+
+### No picker UI, on purpose
+
+A Pi Pocket extension can only carry tools, prompt sections, hooks, wraps and
+tasks; it cannot register a command, a sheet or a settings panel. So the choice
+is made through the conversation (by a tool), or by the operator in the portal —
+not by a dropdown in a session.
 
 ## Which engine answers, and whether it searched
 

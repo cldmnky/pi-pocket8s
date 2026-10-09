@@ -240,8 +240,13 @@ It is on by default and can be turned off — or back on — in Menu → Extensi
 
 It calls the **search model's own provider API** rather than scraping: Google Gemini grounding,
 OpenAI/Codex Responses, xAI Grok, Anthropic, DeepSeek, Ollama Cloud and OpenCode Zen/Go. Which
-model does the searching is the install's choice, taken from `~/.pi/agent/web-search.json` in the
-workspace home:
+model does the searching is the install's choice, and a person changes it by asking: the
+`web_search_config` tool lists the search models this install can use, sets one, or clears the
+choice ("use Gemini for web searches", "which model is searching?"). It validates the model
+against what the install actually has and says what it will use next.
+
+The choice is kept in `~/.pi/agent/web-search.json` in the workspace home (`PI_WEB_SEARCH_CONFIG`
+moves it), so it can also be set by hand:
 
 ```json
 { "provider": "opencode-go", "model": "muse-spark-1.3-contributor" }

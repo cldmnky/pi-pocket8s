@@ -7,6 +7,9 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getProviderKind } from "./vendor/providers/config.ts";
 
+/** A model the picker and the config tool consider: whatever the model registry hands out. */
+export type SearchCandidate = Model<Api>;
+
 /**
  * Providers whose native search API this build has verified, most preferred first.
  *
