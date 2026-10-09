@@ -23,6 +23,34 @@ export function pinPath(agentDir: string): string {
     return process.env.PI_WEB_SEARCH_CONFIG || join(agentDir, "web-search.json");
 }
 
+/** Where the runtime Secret is mounted into the agent; the portal writes the pin there. */
+export const PORTAL_PIN_DIR = "/run/pocket-config/";
+
+export type PinSource = "portal" | "workspace";
+
+/** The portal's mounted file, or the workspace's own file. */
+export function pinSource(path: string): PinSource {
+    return path.startsWith(PORTAL_PIN_DIR) ? "portal" : "workspace";
+}
+
+/**
+ * Why writing the pin failed, in terms a person can act on. The portal's file is on a read-only
+ * mount, so a session cannot take the choice over: say who owns it and where to change it.
+ */
+export function describeWriteFailure(path: string, error: unknown): string {
+    if (pinSource(path) === "portal") {
+        return `The portal sets the search model for this workspace (${path} is read-only): change it in the portal's Web search setting, which applies after the agent restarts.`;
+    }
+
+    const code = (error as { code?: string }).code;
+
+    if (code === "EROFS" || code === "EACCES" || code === "EPERM") {
+        return `Cannot write ${path} (${code}): the agent cannot change the search model here.`;
+    }
+
+    return `Cannot write ${path}: ${describe(error)}`;
+}
+
 export function readPin(path: string): PinFile {
     let raw: string;
 

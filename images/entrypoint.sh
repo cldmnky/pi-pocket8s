@@ -16,6 +16,7 @@ readonly DATA_DIR="${PI_POCKET_DIR:-${HOME_DIR}/.pi-pocket}"
 readonly CONFIG_DIR="/run/pocket-config"
 readonly SA_DIR="/var/run/secrets/kubernetes.io/serviceaccount"
 readonly API_KEYS_FILE="${CONFIG_DIR}/api-keys.json"
+readonly WEB_SEARCH_FILE="${CONFIG_DIR}/web-search.json"
 readonly OWNER_LOGIN_KEY="owner-login-url"
 
 # The only secret keys that may become environment variables. Anything else in
@@ -105,6 +106,26 @@ load_api_keys() {
     done
 
     log "exported ${loaded} of ${#API_KEY_NAMES[@]} allowlisted provider key(s) from ${API_KEYS_FILE}"
+}
+
+# web-search.json (optional) is the portal's choice of the model that searches the web. Pi's own
+# configuration file for the search extension is pointed at the mounted copy, so the extension reads
+# the portal's setting; because the mount is read-only, an in-session change cannot take it over
+# (the extension says so, and where to change it). Absent or unusable: nothing is exported, and the
+# workspace's own ~/.pi/agent/web-search.json applies.
+load_web_search() {
+    if [ ! -f "${WEB_SEARCH_FILE}" ]; then
+        return 0
+    fi
+
+    if ! jq -e 'type == "object" and (.provider | type) == "string" and (.model | type) == "string"
+        and (.provider | length) > 0 and (.model | length) > 0' "${WEB_SEARCH_FILE}" >/dev/null 2>&1; then
+        warn "${WEB_SEARCH_FILE} is not {\"provider\":…,\"model\":…}; the workspace's own web-search.json applies instead"
+        return 0
+    fi
+
+    export PI_WEB_SEARCH_CONFIG="${WEB_SEARCH_FILE}"
+    log "web search model set by the portal: $(jq -r '"\(.provider)/\(.model)"' "${WEB_SEARCH_FILE}")"
 }
 
 # authorized_keys and known_hosts are exposed as files for tooling (git, ssh clients);
@@ -308,6 +329,7 @@ if [ -n "${POCKET_FRAME_ANCESTORS:-}" ] && [ -x /usr/local/bin/pi-pocket-embed-p
     /usr/local/bin/pi-pocket-embed-patch || warn "continuing without embedded portal support"
 fi
 load_api_keys
+load_web_search
 if [ -n "${GITHUB_BROKER_URL:-}" ]; then
     # No tokens in URLs/config files; Git asks the helper for current credentials
     # for each repository (including clones), and gh uses the broker per command.

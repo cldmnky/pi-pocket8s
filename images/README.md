@@ -59,6 +59,7 @@ node /opt/pi-pocket/bin/pi-pocket.js \
 - **Port**: `8787` (`PI_POCKET_PORT` can override).
 - **Working directory**: `/workspace/repos`; Pi Pocket uses it for new sessions.
 - **Data**: `/workspace/home/.pi-pocket` (`pocket.sqlite`, `config.json`, uploads, push keys).
+- **Configuration mount**: `/run/pocket-config` (the runtime Secret). `api-keys.json` is exported as the allow-listed provider environment variables; `web-search.json`, when present, is exported as `PI_WEB_SEARCH_CONFIG`, which points the agent's web-search configuration at the portal's choice.
 - **Signals**: the launcher is PID 1, so `SIGTERM` stops running work cleanly.
 - **Noninteractive**: the container has no TTY, so `--host 0.0.0.0` selects the LAN
   (direct) access mode and no menu is shown. The launcher's sign-in link and QR code are

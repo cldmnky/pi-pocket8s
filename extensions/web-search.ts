@@ -17,7 +17,7 @@
 import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
 import type { PocketHost } from "/opt/pi-pocket/src/server/host.ts";
-import { clearPin, pinPath, readPin, writePin } from "./web-search/config.ts";
+import { clearPin, describeWriteFailure, pinPath, pinSource, readPin, writePin } from "./web-search/config.ts";
 import { modelRegistry, searchContext } from "./web-search/model.ts";
 import { pickSearchModel, rank, type SearchCandidate } from "./web-search/select.ts";
 import { webSearch, WebSearchSchema } from "./web-search/vendor/web_search.ts";
@@ -28,7 +28,7 @@ const SEARCH_TIMEOUT_MS = 180_000;
 /** Keep the list answer to a size a phone screen and a model can both use. */
 const LIST_LIMIT = 20;
 
-function webSearchTool() {
+function webSearchTool(agentDir: string) {
     return defineTool({
         name: "web_search",
         description:
@@ -77,6 +77,12 @@ function webSearchTool() {
             if (!failed && details.grounded !== true) {
                 const searched = details.model === undefined ? "the configured model" : details.model;
                 answer += `\n\n(No search results came back from ${searched}: it did not search, or that provider has no web search tool.)`;
+            }
+            if (failed && readPin(pinPath(agentDir)).pin === undefined) {
+                // Nothing chose this model but the fallback: point at the way out, because a
+                // provider can reject a model this install still lists (an account without
+                // access to it, for one) and the fix is to pick another.
+                answer += "\n\n(Nothing is pinned, so the model is chosen automatically: web_search_config action=list shows what this install can search with.)";
             }
 
             return {
@@ -141,8 +147,13 @@ function configTool(agentDir: string) {
                           ? `\n\nNote: ${file.pin.provider} is not a provider this build verified for search. If answers come back with no search results, pick one from web_search_config action=list.`
                           : "";
 
+                const owner =
+                    pinSource(path) === "portal"
+                        ? `set by the portal, in ${path}`
+                        : `pinned in ${path}`;
+
                 return text(
-                    `Web search uses ${file.pin.provider}/${file.pin.model} (pinned in ${path}).${warning}`,
+                    `Web search uses ${file.pin.provider}/${file.pin.model} (${owner}).${warning}`,
                 );
             }
 
@@ -164,7 +175,13 @@ function configTool(agentDir: string) {
             }
 
             if (action === "clear") {
-                const had = clearPin(path);
+                let had: boolean;
+
+                try {
+                    had = clearPin(path);
+                } catch (error) {
+                    return { content: [{ type: "text" as const, text: describeWriteFailure(path, error) }], isError: true };
+                }
 
                 return text(
                     had
@@ -203,7 +220,11 @@ function configTool(agentDir: string) {
                     Number(rank(a) < 0) - Number(rank(b) < 0) || rank(a) - rank(b) || a.id.localeCompare(b.id),
             )[0] as SearchCandidate;
 
-            writePin(path, { provider: chosen.provider, model: chosen.id });
+            try {
+                writePin(path, { provider: chosen.provider, model: chosen.id });
+            } catch (error) {
+                return { content: [{ type: "text" as const, text: describeWriteFailure(path, error) }], isError: true };
+            }
 
             const others = matches.filter((model) => model !== chosen).map(describeModel);
             const alternative =
@@ -233,6 +254,6 @@ function text(body: string) {
 export default function createWebSearch(host: PocketHost) {
     return defineExtension({
         name: "pocket-web-search",
-        tools: [webSearchTool(), configTool(host.agentDir)],
+        tools: [webSearchTool(host.agentDir), configTool(host.agentDir)],
     });
 }

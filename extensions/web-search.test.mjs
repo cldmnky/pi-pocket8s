@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { clearPin, pinPath, readPin, writePin } from "./web-search/config.ts";
+import { clearPin, describeWriteFailure, pinPath, pinSource, readPin, writePin } from "./web-search/config.ts";
 import { PREFERRED, pickSearchModel, rank } from "./web-search/select.ts";
 
 function model(provider, api, id, baseUrl = "https://example.invalid/v1") {
@@ -119,4 +119,24 @@ test("PI_WEB_SEARCH_CONFIG moves the file, the way the vendored reader expects",
         if (previous === undefined) delete process.env.PI_WEB_SEARCH_CONFIG;
         else process.env.PI_WEB_SEARCH_CONFIG = previous;
     }
+});
+
+test("the pin's owner is decided by where it lives", () => {
+    assert.equal(pinSource("/run/pocket-config/web-search.json"), "portal");
+    assert.equal(pinSource("/workspace/home/.pi/agent/web-search.json"), "workspace");
+    assert.equal(pinSource("/somewhere/else/web-search.json"), "workspace");
+});
+
+test("a read-only portal pin says who owns the choice instead of failing blind", () => {
+    const portal = "/run/pocket-config/web-search.json";
+    const workspace = "/workspace/home/.pi/agent/web-search.json";
+
+    // EROFS is what writing into a mounted Secret gives.
+    const denied = Object.assign(new Error("read-only file system"), { code: "EROFS" });
+
+    assert.match(describeWriteFailure(portal, denied), /portal sets the search model.*read-only.*restart/s);
+    assert.match(describeWriteFailure(workspace, denied), /Cannot write .*EROFS/);
+
+    const missing = Object.assign(new Error("no such file or directory"), { code: "ENOENT" });
+    assert.match(describeWriteFailure(workspace, missing), /Cannot write .*no such file or directory/);
 });

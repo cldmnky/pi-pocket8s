@@ -42,26 +42,35 @@ searching?" — and the agent calls the tool. Setting one is idempotent, validat
 against the models the install actually has, and reported back with what it will
 now use; a stale or unusable pin is reported rather than left to fail quietly.
 
-The same thing by hand, in `~/.pi/agent/web-search.json` — the file upstream's
-format already uses, read on every search, so no restart:
+### Who is in charge, in order
 
-```json
-{ "provider": "opencode-go", "model": "muse-spark-1.3-contributor" }
-```
+1. **The portal's Web search setting**, when an operator has set one. It is
+   mounted at `/run/pocket-config/web-search.json` and the entrypoint points
+   `PI_WEB_SEARCH_CONFIG` at it, so it applies from the agent's next start. The
+   mount is read-only: `web_search_config set` says the portal owns the choice
+   instead of pretending to save.
+2. **The workspace's own `~/.pi/agent/web-search.json`**, set in a session with
+   `web_search_config` or by hand — read on every search, so it needs no restart:
 
-`PI_WEB_SEARCH_CONFIG` moves that file elsewhere. Without a pin, the tool picks
-the highest-ranked *available* model from a verified allow-list (`select.ts`). A
-gateway is never picked on its own: it serves many providers behind one endpoint
-under whichever api shape it advertises, and whether it implements that
-provider's search tool is per-gateway. Naming one explicitly works — OpenRouter's
-Anthropic-shaped models were verified to run the search tool — it is just not a
-safe default.
+   ```json
+   { "provider": "opencode-go", "model": "muse-spark-1.3-contributor" }
+   ```
+
+3. **Automatic**: the highest-ranked *available* model from a verified
+   allow-list (`select.ts`). A gateway is never picked on its own: it serves many
+   providers behind one endpoint under whichever api shape it advertises, and
+   whether it implements that provider's search tool is per-gateway. Naming one
+   explicitly works — OpenRouter's Anthropic-shaped models were verified to run
+   the search tool — it is just not a safe default.
+
+`PI_WEB_SEARCH_CONFIG` moves the file, which is how the portal's copy takes
+precedence.
 
 ### No picker UI, on purpose
 
 A Pi Pocket extension can only carry tools, prompt sections, hooks, wraps and
 tasks; it cannot register a command, a sheet or a settings panel. So the choice
-is made through the conversation (by a tool), or by the operator in the portal —
+is made through the conversation (by a tool) or by the operator in the portal —
 not by a dropdown in a session.
 
 ## Which engine answers, and whether it searched
