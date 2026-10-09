@@ -226,6 +226,10 @@ type configViewResponse struct {
 	PocketURL       string          `json:"pocketUrl"`
 	TerminalURL     string          `json:"terminalUrl"`
 	OwnerLoginURL   string          `json:"ownerLoginUrl"`
+	WebSearch       *struct {
+		Provider string `json:"provider"`
+		Model    string `json:"model"`
+	} `json:"webSearch"`
 }
 
 type statusResponse struct {

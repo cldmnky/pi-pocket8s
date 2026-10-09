@@ -132,6 +132,24 @@
         </div>
       </section>
 
+      <section aria-labelledby="websearch-title">
+        <h3 id="websearch-title">Web search</h3>
+        <p>Which model the agent searches the web with, through that provider's own search API
+          (for example <code>google-generative-ai</code> with <code>gemini-3.7-flash</code>, or
+          <code>openai-codex</code> with <code>gpt-5.6-sol</code>). Leave both empty and the agent
+          chooses, or an agent user can set it for themselves in a session. Applies when the agent
+          restarts; while it is set, it takes precedence over the agent's own choice.</p>
+        <div class="field">
+          <label for="web-search-provider">Provider</label>
+          <input id="web-search-provider" type="text" spellcheck="false" autocomplete="off" placeholder="google-generative-ai" aria-describedby="web-search-help">
+        </div>
+        <div class="field">
+          <label for="web-search-model">Model</label>
+          <input id="web-search-model" type="text" spellcheck="false" autocomplete="off" placeholder="gemini-3.7-flash" aria-describedby="web-search-help">
+          <p id="web-search-help" class="hint">Both or neither. Searches are model calls billed to the provider credentials above.</p>
+        </div>
+      </section>
+
       <section aria-labelledby="save-title">
         <h3 id="save-title">Save configuration</h3>
         <p>Changes are saved against the version loaded above. If another operator saves first, this save fails and asks you to reload.</p>

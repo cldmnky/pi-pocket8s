@@ -119,6 +119,7 @@ left untouched:
 | `api-keys.json` | JSON object mapping allowed environment names to values. |
 | `authorized_keys` | OpenSSH public keys, one per line. Comments and blank lines allowed. |
 | `known_hosts` | Free-form `known_hosts` text. |
+| `web-search.json` | `{"provider":"…","model":"…"}`: which model the agent searches the web with, through that provider's own search API. Absent (or empty) means the agent chooses, or its users do. The key is deleted when the setting is cleared. |
 
 Allowed API key names: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
 `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`,
@@ -128,6 +129,12 @@ Allowed API key names: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
 Names outside this list are rejected so the portal cannot be used as a generic
 environment injector. Unknown names already present in `api-keys.json` are
 preserved on write.
+
+`web-search.json` is mounted into the agent at `/run/pocket-config/web-search.json`.
+The entrypoint points the agent's web-search configuration at that file, so the
+portal's choice takes precedence over one made inside a session, and the agent's
+`web_search_config` tool reports that the portal owns it rather than pretending to
+save. Like provider keys, it applies when the agent restarts.
 
 ## HTTP API
 
@@ -140,7 +147,7 @@ preserved on write.
 | `GET` | `/api/github/status` | session | Bot identity, organization/team, and allow-listed repositories (GitHub mode). |
 | `POST` | `/api/github/credentials` | workspace SA token (`pi-pocket-github` audience) | One-hour, repository-scoped App installation token (GitHub mode). |
 | `GET` | `/` | none | Embedded SPA. |
-| `GET` | `/api/config` | bearer | Redacted config: `resourceVersion`, `allowedApiKeys`, `apiKeys` (name → set), `authorizedKeys`, `knownHosts`, `pocketUrl`, `ownerLoginUrl` (empty until the agent syncs it). |
+| `GET` | `/api/config` | bearer | Redacted config: `resourceVersion`, `allowedApiKeys`, `apiKeys` (name → set), `authorizedKeys`, `knownHosts`, `pocketUrl`, `ownerLoginUrl` (empty until the agent syncs it), `webSearch` (or `null`). |
 | `POST` | `/api/config` | bearer | Partial update, see below. |
 | `GET` | `/api/status` | bearer | Deployment replica status and last restart time. |
 | `POST` | `/api/deployment/start` | bearer | Scale the Deployment to 1 replica. |
@@ -158,9 +165,15 @@ least one change required):
     "remove": ["OPENAI_API_KEY"]
   },
   "authorizedKeys": "ssh-ed25519 AAAAC3... user@example.com\n",
-  "knownHosts": "pocket.example.com ssh-ed25519 AAAAC3...\n"
+  "knownHosts": "pocket.example.com ssh-ed25519 AAAAC3...\n",
+  "webSearch": { "provider": "opencode-go", "model": "muse-spark-1.3-contributor" }
 }
 ```
+
+`webSearch` needs both fields or neither: an empty pair clears the setting, and
+half a choice is rejected, because the agent would otherwise be mounted a file it
+cannot use. Provider ids are lowercase letters, digits and dashes; model ids may
+also carry `/ . : @ + -` for namespaced ids such as `anthropic/claude-haiku-4.5`.
 
 Example:
 
@@ -169,8 +182,9 @@ curl -sf -H "Authorization: Bearer $PORTAL_TOKEN" \
   https://portal.example.com/api/config
 ```
 
-If `api-keys.json` in the Secret is not valid JSON, the portal refuses reads
-and writes with `500` instead of guessing, so existing keys are never dropped.
+If `api-keys.json` or `web-search.json` in the Secret is not valid, the portal
+refuses reads and writes with `500` instead of guessing, so existing keys are
+never dropped.
 
 ## Kubernetes RBAC
 

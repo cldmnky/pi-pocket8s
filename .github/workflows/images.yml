@@ -193,6 +193,21 @@ jobs:
           # The prober lives in the repo so it is syntax-checked by CI too.
           cp "$GITHUB_WORKSPACE/images/term-smoke.mjs" /tmp/term-smoke.mjs
           SMOKE_TOKEN="${token}" node /tmp/term-smoke.mjs
+          # The web_search extension the image ships as a Pi Pocket built-in: the module and its
+          # vendored provider code are in place, it still installs its tool, and the running app
+          # loaded it (a module that fails to load is reported in the log and left off).
+          docker exec smoke test -f /opt/pi-pocket/src/server/extensions/web-search/vendor/providers/openai.ts
+          docker exec --workdir /opt/pi-pocket smoke node --input-type=module -e '
+            const { default: createWebSearch } = await import("/opt/pi-pocket/src/server/extensions/web-search.ts");
+            const extension = createWebSearch({ notice() {} });
+            if (extension.name !== "pocket-web-search") throw new Error("unexpected extension name: " + extension.name);
+            if (extension.tools?.[0]?.name !== "web_search") throw new Error("the web_search tool was not installed");
+            console.log("web-search extension ok");
+          '
+          if grep -qF 'web-search.ts failed to load' <<<"${logs}"; then
+            echo "::error::the web-search extension failed to load in the running app"
+            exit 1
+          fi
 
           # Node 24 with its built-in SQLite, plus the upstream runtime dependencies.
           docker exec smoke node -e 'const { DatabaseSync } = require("node:sqlite"); new DatabaseSync(":memory:").exec("select 1"); console.log("node:sqlite ok")'

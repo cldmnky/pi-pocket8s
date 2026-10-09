@@ -232,6 +232,49 @@ restart instead.
 
 Public keys from the portal are exposed as `~/.ssh/authorized_keys` for tools/configuration. **No SSH server is enabled**, and HTTP Ingress cannot provide SSH transport. For private Git repositories, public keys alone are not authentication: use agent credentials, a Git-provider token, or separately provision an `id_ed25519` private key in the runtime Secret. The portal intentionally refuses private keys. Set `known_hosts` using host keys whose fingerprints you verified independently, not blind trust-on-first-use. SSH strict host-key checking is enabled by the runtime image.
 
+## Web search
+
+The image ships an agent **web search** tool: `web_search`, a Pi Pocket built-in extension
+(`extensions/` in this repository, installed under `/opt/pi-pocket/src/server/extensions/`).
+It is on by default and can be turned off — or back on — in Menu → Extensions.
+
+It calls the **search model's own provider API** rather than scraping: Google Gemini grounding,
+OpenAI/Codex Responses, xAI Grok, Anthropic, DeepSeek, Ollama Cloud and OpenCode Zen/Go. Which
+model does the searching is chosen in one of two places:
+
+- **In the portal** (Configuration → Web search), for the whole workspace: provider and model, saved
+  into the runtime Secret, mounted at `/run/pocket-config/web-search.json`, applied when the agent
+  restarts. While it is set it takes precedence, and the agent's own tool says so.
+- **In a session**, by asking: the `web_search_config` tool lists the search models this install can
+  use and sets or clears one ("use Gemini for web searches", "which model is searching?"). It
+  validates the model against what the install actually has.
+
+The session choice is kept in `~/.pi/agent/web-search.json` in the workspace home
+(`PI_WEB_SEARCH_CONFIG` moves it), so it can also be set by hand:
+
+```json
+{ "provider": "opencode-go", "model": "muse-spark-1.3-contributor" }
+```
+
+With no such file the tool picks the highest-ranked available model from an allow-list of
+providers it has been verified against. A gateway (OpenRouter, for one) is never picked on its own:
+it serves many providers behind one endpoint, and whether it implements a given provider's search
+tool is per-gateway. Naming one explicitly works — OpenRouter's Anthropic-shaped models were
+verified to run the search tool — it is just not a safe default.
+
+There is no separate engine switch: **the provider of the chosen model runs the search**, in its own
+way (Google Search grounding for Gemini, the Responses `web_search` tool for OpenAI/Codex, xAI's
+search for Grok, Anthropic's tool, Ollama Cloud's search API). Picking the provider picks the
+backend. Every result also reports which model answered and whether search results actually came
+back, because a search-capable model may decide *not* to search — and that should not look like a
+success.
+
+Costs and access: a search is a **billable model call on the install's own provider credentials**
+(the same `auth.json` the agent uses), and the result text is then sent to the model the
+conversation uses. Nothing is fetched from a search provider that the install has no credentials
+for, and no search runs unless the agent calls the tool. Details, verification and the vendored
+upstream source: [`extensions/web-search/`](extensions/web-search/README.md).
+
 ## Development tools and cluster access
 
 See `images/README.md` for exact bundled versions, package sources and nested Podman limitations. The image integrates tools rather than mounting another image: an image-volume containing `/usr/bin` cannot supply its dependencies, interpreter paths and dynamic libraries safely by simply extending `PATH`.

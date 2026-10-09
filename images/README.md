@@ -42,6 +42,7 @@ verified against the vendor's published SHA-256; RPMS are GPG-verified by `dnf`.
 | GitHub | `gh` CLI v2.102.0 (checksum-verified) at `/usr/local/libexec/gh`; `/usr/local/bin/gh` is a wrapper (`images/github-credentials.mjs`) that fetches a short-lived, repository-scoped GitHub App installation token from the credential broker per command, and doubles as a Git credential helper (`gh --git`) for `https://github.com` — tokens are never stored on disk or put in remote URLs. Active when `GITHUB_BROKER_URL` is set (the chart sets it in GitHub App mode) |
 | Browser | Chrome-for-Testing `chrome-headless-shell` (pinned Stable, both arches) at `/usr/local/bin/chromium`; `PI_POCKET_BROWSER`/`PI_POCKET_BROWSER_ARGS=--no-sandbox` are preset, `--no-sandbox` is required inside user namespaces |
 | Everyday tools | `ripgrep` (v15.2.0, checksum-verified), `jq`, `curl`, `tar`, `unzip`, `xz`, `rsync`, `procps-ng` (`ps`, `top`), `vim`, `less`, `file`, `diffutils` |
+| Web search | `extensions/web-search.ts` plus `extensions/web-search/`, installed as a Pi Pocket built-in extension in `/opt/pi-pocket/src/server/extensions/` (on by default, toggled in Menu → Extensions). Adds the agent's `web_search` tool, backed by the search model's own provider API (Gemini grounding, OpenAI/Codex Responses, xAI, Anthropic, DeepSeek, Ollama Cloud, OpenCode). Provider code vendored unmodified from `pi-web-search` 1.7.0 (MIT, `extensions/web-search/NOTICE.md`); searches are billable model calls on the install's own credentials. The build fails if the module stops loading or stops installing its tool |
 | Log safety | `images/log-filter.mjs` (`pi-pocket-log-filter`): runs the launcher, redacts the owner sign-in token and QR block from the container log, forwards signals, passes errors through |
 
 ## Runtime contract
@@ -58,6 +59,7 @@ node /opt/pi-pocket/bin/pi-pocket.js \
 - **Port**: `8787` (`PI_POCKET_PORT` can override).
 - **Working directory**: `/workspace/repos`; Pi Pocket uses it for new sessions.
 - **Data**: `/workspace/home/.pi-pocket` (`pocket.sqlite`, `config.json`, uploads, push keys).
+- **Configuration mount**: `/run/pocket-config` (the runtime Secret). `api-keys.json` is exported as the allow-listed provider environment variables; `web-search.json`, when present, is exported as `PI_WEB_SEARCH_CONFIG`, which points the agent's web-search configuration at the portal's choice.
 - **Signals**: the launcher is PID 1, so `SIGTERM` stops running work cleanly.
 - **Noninteractive**: the container has no TTY, so `--host 0.0.0.0` selects the LAN
   (direct) access mode and no menu is shown. The launcher's sign-in link and QR code are

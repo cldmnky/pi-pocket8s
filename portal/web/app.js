@@ -14,6 +14,8 @@
     running: null,
     authorizedKeys: '',
     knownHosts: '',
+    webSearchProvider: '',
+    webSearchModel: '',
     ownerLoginUrl: '',
     busy: false
   };
@@ -275,6 +277,14 @@
     state.authorizedKeys = authorizedKeys;
     state.knownHosts = knownHosts;
 
+    var webSearch = (config.webSearch && typeof config.webSearch === 'object') ? config.webSearch : {};
+    var webSearchProvider = typeof webSearch.provider === 'string' ? webSearch.provider : '';
+    var webSearchModel = typeof webSearch.model === 'string' ? webSearch.model : '';
+    elements['web-search-provider'].value = webSearchProvider;
+    elements['web-search-model'].value = webSearchModel;
+    state.webSearchProvider = webSearchProvider;
+    state.webSearchModel = webSearchModel;
+
     var link = elements['pocket-link'];
     if (typeof config.pocketUrl === 'string' && config.pocketUrl !== '') {
       link.href = config.pocketUrl;
@@ -446,7 +456,13 @@
     if (knownHosts !== state.knownHosts) {
       body.knownHosts = knownHosts;
     }
-    if (!hasKeyChanges && body.authorizedKeys === undefined && body.knownHosts === undefined) {
+    var webSearchProvider = elements['web-search-provider'].value.trim();
+    var webSearchModel = elements['web-search-model'].value.trim();
+    if (webSearchProvider !== state.webSearchProvider || webSearchModel !== state.webSearchModel) {
+      // Both or neither: the server rejects half a choice, and an empty pair clears it.
+      body.webSearch = { provider: webSearchProvider, model: webSearchModel };
+    }
+    if (!hasKeyChanges && body.authorizedKeys === undefined && body.knownHosts === undefined && body.webSearch === undefined) {
       setMessage('Nothing to save.', '');
       return;
     }
