@@ -6,9 +6,17 @@ import { spawn, execFileSync } from 'node:child_process';
 import { request } from 'node:https';
 import { fileURLToPath } from 'node:url';
 
+/**
+ * This machine's own setup is wrong: no repository in scope, a broker URL that is not the expected
+ * HTTPS endpoint, a projected token that cannot be read. Safe to print verbatim — it says nothing
+ * about why the broker refused. Anything else stays a generic message: a denial must not reveal
+ * whether a repository, an installation, or a token scope is the reason.
+ */
+export class SetupError extends Error {}
+
 export function repository(value) {
   const name = String(value || '').replace(/\.git$/, '').toLowerCase();
-  if (!/^[a-z0-9][a-z0-9_.-]*\/[a-z0-9][a-z0-9_.-]*$/.test(name)) throw new Error('Select a GitHub repository as owner/name');
+  if (!/^[a-z0-9][a-z0-9_.-]*\/[a-z0-9][a-z0-9_.-]*$/.test(name)) throw new SetupError('Select a GitHub repository as owner/name');
   return name;
 }
 
@@ -16,18 +24,18 @@ export function fromRemote(remote) {
   const ssh = /^git@github\.com:([^\s]+)$/.exec(remote);
   if (ssh) return repository(ssh[1]);
   const url = new URL(remote);
-  if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.port || url.search || url.hash) throw new Error('Only github.com repositories are supported');
+  if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.port || url.search || url.hash) throw new SetupError('Only github.com repositories are supported');
   return repository(url.pathname.slice(1));
 }
 
 export function selectRepository(args, env, remote) {
-  if (env.GH_HOST && env.GH_HOST !== 'github.com') throw new Error('Only github.com is supported');
+  if (env.GH_HOST && env.GH_HOST !== 'github.com') throw new SetupError('Only github.com is supported');
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--hostname' && args[i + 1] !== 'github.com') throw new Error('Only github.com is supported');
-    if (args[i].startsWith('--hostname=') && args[i] !== '--hostname=github.com') throw new Error('Only github.com is supported');
+    if (args[i] === '--hostname' && args[i + 1] !== 'github.com') throw new SetupError('Only github.com is supported');
+    if (args[i].startsWith('--hostname=') && args[i] !== '--hostname=github.com') throw new SetupError('Only github.com is supported');
   }
   if (args[0] === 'api') {
-    if (args.some(a => /^https?:\/\//.test(a))) throw new Error('Absolute gh api URLs are not allowed');
+    if (args.some(a => /^https?:\/\//.test(a))) throw new SetupError('Absolute gh api URLs are not allowed');
     const apiRepo = args.map(a => /^(?:\/)?repos\/([^/]+\/[^/]+)/.exec(a)).find(Boolean);
     if (apiRepo) return repository(apiRepo[1]);
   }
@@ -38,14 +46,24 @@ export function selectRepository(args, env, remote) {
   // gh repo clone OWNER/NAME has no existing Git remote yet.
   if (args[0] === 'repo' && args[1] === 'clone') return args[2]?.startsWith('https://') ? fromRemote(args[2]) : repository(args[2]);
   if (env.GH_REPO) return repository(env.GH_REPO);
-  return fromRemote(remote());
+
+  // Every command asks the broker for a token scoped to one repository, so a repository has to be
+  // in scope before anything else can happen. Saying which way out beats the generic message below,
+  // which reads as if the broker were at fault.
+  let remoteUrl;
+  try {
+    remoteUrl = remote();
+  } catch {
+    throw new SetupError('No repository in scope: run gh inside a clone whose origin is on github.com, or name one with --repo owner/name or GH_REPO=owner/name');
+  }
+  return fromRemote(remoteUrl);
 }
 
 export async function credential(repo, env = process.env) {
   const url = new URL(env.GITHUB_BROKER_URL || '');
-  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.pathname !== '/api/github/credentials') throw new Error('Configure a trusted HTTPS GitHub broker URL');
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.pathname !== '/api/github/credentials') throw new SetupError('Configure a trusted HTTPS GitHub broker URL');
   const token = readFileSync(env.GITHUB_BROKER_TOKEN_FILE || '/run/github-broker/token', 'utf8').trim();
-  if (!token || /\s/.test(token)) throw new Error('Workspace broker token unavailable');
+  if (!token || /\s/.test(token)) throw new SetupError('Workspace broker token unavailable');
   const body = JSON.stringify({ repository: repository(repo) });
   const ca = env.GITHUB_BROKER_CA_FILE ? readFileSync(env.GITHUB_BROKER_CA_FILE) : undefined;
   return await new Promise((resolve, reject) => {
@@ -90,4 +108,10 @@ export async function run(args) {
   await new Promise(resolve => child.on('exit', (code, signal) => { process.exitCode = code ?? (signal ? 128 : 1); resolve(); }));
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) run(process.argv.slice(2)).catch(() => { console.error('GitHub credentials unavailable: configure an allowed repository, HTTPS broker, and projected service-account token'); process.exitCode = 1; });
+if (process.argv[1] === fileURLToPath(import.meta.url)) run(process.argv.slice(2)).catch(error => {
+  // Local setup failures are worth spelling out; a broker decision stays vague on purpose.
+  console.error(error instanceof SetupError
+    ? error.message
+    : 'GitHub credentials unavailable: the credential broker refused or could not be reached (check the repository allow-list for this workspace and the App installation)');
+  process.exitCode = 1;
+});
