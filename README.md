@@ -202,6 +202,25 @@ already allows the router to reach it. A human typing in the terminal bypasses
 Lancet Guard exactly like the owner's own `!`-commands — only the owner token
 opens it, and keystrokes are never logged.
 
+### Browser automation for agents
+
+Agents in the workspace can drive real web pages with the `agent-browser` CLI
+(pinned in the image), which controls the bundled headless Chromium over CDP:
+accessibility-tree snapshots with compact element refs, clicks, form fills,
+text extraction, screenshots, persistent profiles, and an auth vault. Version-
+matched usage instructions ship with the CLI — `agent-browser skills get core`
+is the entry point; use a named session per task
+(`AGENT_BROWSER_SESSION=...`) so parallel agents don't share one browser.
+Details in `images/README.md` ("Browser automation for agents"). The browser
+and `--no-sandbox` are preconfigured; `agent-browser install` must not be run
+(it would download a second browser).
+
+In any session, `/agent-browser <task>` (e.g. `/agent-browser open the staging
+dashboard and screenshot the deploy status`) runs the task through the CLI,
+following the seeded `agent-browser` skill (`/skill:agent-browser` forces it).
+The command and skill are seeded from the image into `~/.pi/agent/` on pod
+boot — see `pi-agent/README.md`.
+
 ### Provider OAuth (browser) logins
 
 Interactive provider logins (e.g. OpenAI with a browser) start a `localhost`

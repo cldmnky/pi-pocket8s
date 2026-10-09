@@ -41,6 +41,7 @@ verified against the vendor's published SHA-256; RPMS are GPG-verified by `dnf`.
 | Kubernetes | pinned `kubectl` v1.35.6 (matches the 1.35 cluster; newer clients break skew policy), `oc` 4.22.17, `helm` v4.3.0, each checksum-verified |
 | GitHub | `gh` CLI v2.102.0 (checksum-verified) at `/usr/local/libexec/gh`; `/usr/local/bin/gh` is a wrapper (`images/github-credentials.mjs`) that fetches a short-lived, repository-scoped GitHub App installation token from the credential broker per command, and doubles as a Git credential helper (`gh --git`) for `https://github.com` — tokens are never stored on disk or put in remote URLs. Active when `GITHUB_BROKER_URL` is set (the chart sets it in GitHub App mode) |
 | Browser | Chrome-for-Testing `chrome-headless-shell` (pinned Stable, both arches) at `/usr/local/bin/chromium`; `PI_POCKET_BROWSER`/`PI_POCKET_BROWSER_ARGS=--no-sandbox` are preset, `--no-sandbox` is required inside user namespaces |
+| Browser automation | `agent-browser` CLI (pinned, pruned to the build arch) driving that Chromium over CDP; `AGENT_BROWSER_EXECUTABLE_PATH`/`AGENT_BROWSER_ARGS=--no-sandbox` are preset (see "Browser automation for agents") |
 | Everyday tools | `ripgrep` (v15.2.0, checksum-verified), `jq`, `curl`, `tar`, `unzip`, `xz`, `rsync`, `procps-ng` (`ps`, `top`), `vim`, `less`, `file`, `diffutils` |
 | Web search | `extensions/web-search.ts` plus `extensions/web-search/`, installed as a Pi Pocket built-in extension in `/opt/pi-pocket/src/server/extensions/` (on by default, toggled in Menu → Extensions). Adds the agent's `web_search` tool, backed by the search model's own provider API (Gemini grounding, OpenAI/Codex Responses, xAI, Anthropic, DeepSeek, Ollama Cloud, OpenCode). Provider code vendored unmodified from `pi-web-search` 1.7.0 (MIT, `extensions/web-search/NOTICE.md`); searches are billable model calls on the install's own credentials. The build fails if the module stops loading or stops installing its tool |
 | Log safety | `images/log-filter.mjs` (`pi-pocket-log-filter`): runs the launcher, redacts the owner sign-in token and QR block from the container log, forwards signals, passes errors through |
@@ -114,6 +115,43 @@ oc exec deploy/pi-pocket -- cat /workspace/home/.pi-pocket/config.json
 ```
 
 Keep that output private: do not paste the token into tickets, logs, or CI output.
+
+### Browser automation for agents
+
+The image ships the [`agent-browser`](https://github.com/vercel-labs/agent-browser)
+CLI so agents can drive real web pages with the bundled Chromium: navigate,
+snapshot accessibility trees (`snapshot -i` with compact `@eN` refs), click,
+fill forms, extract text, screenshot, keep login state in profiles, and store
+credentials in its auth vault (the LLM never sees passwords). Usage
+instructions always match the installed version and ship with the CLI itself:
+
+```sh
+agent-browser skills get core        # start here: workflow, patterns, troubleshooting
+agent-browser skills get core --full # plus the full command reference
+```
+
+Conventions for agents in this pod:
+
+- Use a **named session** per task so parallel agents don't share one browser:
+  `export AGENT_BROWSER_SESSION="$(agent-browser session id --scope worktree --prefix task)"`.
+- The browser executable and `--no-sandbox` are preset via
+  `AGENT_BROWSER_EXECUTABLE_PATH`/`AGENT_BROWSER_ARGS`; no `agent-browser install`
+  is needed (it would download a second browser).
+- Headless is the default; there is no display, so never `--headed`.
+- Daemon state, profiles, and vault live under the workspace home and persist
+  on the PVC; `agent-browser close` (or `--all`) when done.
+- Provider OAuth logins done through the browser persist like manual logins —
+  see the root README's provider-login section.
+
+### Seeded Pi skill and prompt template
+
+`/usr/share/pi-agent/` holds the Pi configuration shipped in the image
+(`pi-agent/` in this repo): the `agent-browser` skill and the
+`/agent-browser` prompt template. The entrypoint copies each into
+`~/.pi/agent/` on boot when it is not already there, so every session gets
+the `/agent-browser …` slash command with no further setup. In-pod edits
+survive restarts; deleting a file re-seeds the shipped copy on the next pod
+start, which is also how updates reach an existing volume.
 
 ## Pod security profiles
 

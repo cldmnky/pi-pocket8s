@@ -79,6 +79,33 @@ prepare_directories() {
     fi
 }
 
+# Seed the shipped Pi skill and prompt template into the workspace home.
+# Copy-if-missing: in-pod edits survive restarts, and deleting a file re-seeds
+# the shipped copy on the next start (the update path for existing volumes).
+seed_pi_agent_files() {
+    local src="${PI_AGENT_SOURCE:-/usr/share/pi-agent}"
+    local dest="${HOME_DIR}/.pi/agent"
+    local pair
+    for pair in \
+        "skills/agent-browser/SKILL.md:skills/agent-browser/SKILL.md" \
+        "prompts/agent-browser.md:prompts/agent-browser.md"; do
+        local from="${src}/${pair%%:*}" to="${dest}/${pair##*:}"
+        if [ -e "${to}" ]; then
+            continue
+        fi
+        if [ -r "${from}" ]; then
+            mkdir -p "$(dirname "${to}")" 2>/dev/null || true
+            if cp "${from}" "${to}" 2>/dev/null; then
+                log "seeded ${to#$HOME_DIR/} from the image"
+            else
+                warn "cannot seed ${to}"
+            fi
+        else
+            warn "shipped Pi agent file missing: ${from}"
+        fi
+    done
+}
+
 # api-keys.json is a flat JSON object of allowlisted provider/env names. Values are
 # exported into the launcher's environment; a changed secret therefore needs a restart
 # (the portal asks for one) because the variables are read once, at process start.
@@ -325,6 +352,7 @@ launch() {
 }
 
 prepare_directories
+seed_pi_agent_files
 if [ -n "${POCKET_FRAME_ANCESTORS:-}" ] && [ -x /usr/local/bin/pi-pocket-embed-patch ]; then
     /usr/local/bin/pi-pocket-embed-patch || warn "continuing without embedded portal support"
 fi
