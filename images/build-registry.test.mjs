@@ -29,6 +29,8 @@ test("the images workflow builds with podman, not the docker daemon", () => {
     assert.match(workflow, /podman build/, "the build runs through podman");
     assert.match(workflow, /podman manifest/, "the multi-arch index is assembled with podman");
     assert.doesNotMatch(workflow, /uses: docker\//, "no docker actions (buildx, QEMU helper, login) are used");
+    assert.doesNotMatch(workflow, /^\s*(?:sudo\s+)?docker\s+(?:build|run|exec|logs|rm|volume|login|manifest)\b/m,
+        "smoke and publish commands must use podman too; auto-merges can reintroduce docker exec");
 });
 
 test("the arm64 build runs natively, not under QEMU", () => {

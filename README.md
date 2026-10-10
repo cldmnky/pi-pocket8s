@@ -316,6 +316,36 @@ not as bytes. It is a reader, not a browser: no JavaScript, no cookies, no login
 workspace pod could already make that same GET with `curl`, this adds a readable rendering, not new
 reach.
 
+## Subagents: preconfigured agent types
+
+The image ships **preconfigured subagent types** — `architect`, `coder`, and `reviewer` — as a Pi
+Pocket built-in extension (`extensions/agent-types.ts`), on by default and toggled in Menu →
+Extensions. Each is a markdown file with a model, thinking level, tool list, and brief; the
+extension teaches the built-in `subagent` tool to apply one when it spawns with `type: <name>`.
+
+| Type | Model | What it is for |
+| --- | --- | --- |
+| `architect` | `opencode-go/kimi-k3` | Requirements, design, risks, acceptance criteria, an ordered plan. No `write`/`edit`. |
+| `coder` | `opencode-go/deepseek-v4.1-flash` | Implements the plan, writes tests, runs them, fixes failures. |
+| `reviewer` | `opencode-go/glm-5.3` | Verifies the change against the requirements; findings by severity. No `write`/`edit`. |
+
+For non-trivial development work the intended order is **architect → coder → reviewer**, then the
+findings go back to the coder and the reviewer verifies (at most two review/fix cycles, then report
+what is unresolved). The main conversation keeps the plan, the merges, and the final checks; a
+feature belongs in a git worktree of its own, with every subagent working inside it.
+
+The definitions are **data, not code**, and are yours to edit: the image seeds the ones the
+workspace does not have into `~/.pi/agent/agents/` at start (copy-if-missing, so an edit or a
+deletion is never undone), and a project can add or override types in its own `.pi/agents/`. The
+next spawn sees a change — no restart. The format, the workflow, and what has no equivalent here
+(there is no maximum-turn setting, no concurrency cap, no per-type worktree isolation) are in
+[`extensions/agent-types/_readme.md`](extensions/agent-types/_readme.md).
+
+Models are per-deployment: the shipped files use the OpenCode Go models the workflow was designed
+around, and the type's `thinking` level must be one the model offers (the model picker lists them;
+`opencode-go` offers `low`, `high`, and `max`). Nothing here is specific to OpenCode: point a type
+at any model the install is signed in to.
+
 ## Development tools and cluster access
 
 See `images/README.md` for exact bundled versions, package sources and nested Podman limitations. The image integrates tools rather than mounting another image: an image-volume containing `/usr/bin` cannot supply its dependencies, interpreter paths and dynamic libraries safely by simply extending `PATH`.
