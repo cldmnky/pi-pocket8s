@@ -339,11 +339,14 @@ func TestAdminActivationValidationAndConcurrency(t *testing.T) {
 	if w.Code != 400 {
 		t.Fatalf("client-supplied session id accepted: %d %s", w.Code, w.Body)
 	}
-	// Stale resource version.
+	// A stale resourceVersion is a stale snapshot, not a refusal: the controller
+	// rewrites observations continuously, and the live state is still idle.
 	w = env.request("operator", "POST", "/api/admin/activate", `{"resourceVersion":"999","reason":"why","durationSeconds":300,"confirmation":"cluster-admin"}`, true)
-	if w.Code != 409 {
-		t.Fatalf("stale activation: %d %s", w.Code, w.Body)
+	if w.Code != 202 {
+		t.Fatalf("stale snapshot blocked activation: %d %s", w.Code, w.Body)
 	}
+	// Clean up so the remaining assertions start from a known state.
+	env.api.setSession(admin.Record{})
 	// Cross-origin and missing-origin mutations are refused.
 	if w := env.request("operator", "POST", "/api/admin/activate", `{}`, false); w.Code != 403 {
 		t.Fatalf("missing origin: %d", w.Code)
@@ -391,6 +394,24 @@ func TestAdminRevocationIsAvailableToAnyOperator(t *testing.T) {
 	// Revoking again is a conflict, not a success.
 	if w := env.request("operator2", "POST", "/api/admin/revoke", `{}`, true); w.Code != 202 && w.Code != 409 {
 		t.Fatalf("unexpected repeat revocation: %d", w.Code)
+	}
+}
+
+func TestAdminRevocationIgnoresStaleSnapshots(t *testing.T) {
+	env := newAdminEnv(t)
+	env.api.setSession(admin.Record{
+		SessionID: "session-1", RequestedState: admin.RequestedActive, ApprovedByUserID: 42, ApprovedByLogin: "operator",
+		Reason: "live", ApprovedAt: time.Now(), ExpiresAt: time.Now().Add(10 * time.Minute),
+		ObservedPhase: admin.PhaseActive, GrantObserved: true, LastReconciledAt: time.Now(),
+	})
+	// The caller's snapshot is old because the controller wrote observations in
+	// between; revocation must still take effect immediately.
+	w := env.request("operator", "POST", "/api/admin/revoke", `{"resourceVersion":"1"}`, true)
+	if w.Code != 202 {
+		t.Fatalf("stale-snapshot revocation: %d %s", w.Code, w.Body)
+	}
+	if record := env.api.record(); record.RequestedState != admin.RequestedRevoked {
+		t.Fatalf("not revoked: %s", record.Describe())
 	}
 }
 

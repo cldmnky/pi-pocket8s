@@ -149,6 +149,34 @@ func (s *Server) isOperator(caller adminIdentity) bool {
 	return caller.TokenMode || s.cfg.Admin.IsOperator(caller.UserID)
 }
 
+// updateSession applies one session transition with bounded retries. The
+// controller rewrites observations every few seconds, so a conflict means
+// "reload and decide again against live state", never "refuse the operator".
+// The safety decision is always made from the freshly loaded record.
+func (s *Server) updateSession(ctx context.Context, mutate func(admin.State) (admin.Record, error)) (admin.State, error) {
+	store := s.adminStore()
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		state, err := store.Load(ctx)
+		if err != nil {
+			return admin.State{}, err
+		}
+		record, err := mutate(state)
+		if err != nil {
+			return admin.State{}, err
+		}
+		saved, err := store.Save(ctx, admin.State{ResourceVersion: state.ResourceVersion, Record: record})
+		if err == nil {
+			return saved, nil
+		}
+		if !errors.Is(err, admin.ErrConflict) {
+			return admin.State{}, err
+		}
+		lastErr = err
+	}
+	return admin.State{}, lastErr
+}
+
 func (s *Server) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
 	if !s.cfg.Admin.Enabled {
 		writeJSON(w, http.StatusOK, adminStatusResponse{Enabled: false})
@@ -260,9 +288,7 @@ func (s *Server) handleAdminActivate(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
-	store := s.adminStore()
-	state, err := store.Load(ctx)
-	if err != nil {
+	if _, err := s.adminStore().Load(ctx); err != nil {
 		if errors.Is(err, admin.ErrInvalidState) {
 			writeError(w, http.StatusConflict, "cluster-admin state is malformed and requires cleanup")
 			return
@@ -270,39 +296,33 @@ func (s *Server) handleAdminActivate(w http.ResponseWriter, r *http.Request) {
 		s.writeKubeError(w, "read admin session", err)
 		return
 	}
-	if state.ResourceVersion != request.ResourceVersion {
-		writeError(w, http.StatusConflict, "cluster-admin state changed; reload before activating")
-		return
-	}
 	duration := time.Duration(request.DurationSeconds) * time.Second
-	record, err := admin.ValidateActivation(state, admin.ActivationRequest{
-		Reason:           request.Reason,
-		Duration:         duration,
-		ApprovedByUserID: caller.UserID,
-		ApprovedByLogin:  caller.Login,
-		SessionID:        sessionID,
-		TokenOperator:    caller.TokenMode,
-	}, s.cfg.Admin.DefaultDuration, s.cfg.Admin.MaxDuration, time.Now())
+	saved, err := s.updateSession(ctx, func(state admin.State) (admin.Record, error) {
+		return admin.ValidateActivation(state, admin.ActivationRequest{
+			Reason:           request.Reason,
+			Duration:         duration,
+			ApprovedByUserID: caller.UserID,
+			ApprovedByLogin:  caller.Login,
+			SessionID:        sessionID,
+			TokenOperator:    caller.TokenMode,
+		}, s.cfg.Admin.DefaultDuration, s.cfg.Admin.MaxDuration, time.Now())
+	})
 	if err != nil {
 		switch {
 		case errors.Is(err, admin.ErrSessionActive):
 			writeError(w, http.StatusConflict, "a cluster-admin session is already active or being cleaned up")
 		case errors.Is(err, admin.ErrCleanupIncomplet):
 			writeError(w, http.StatusConflict, "a previous session's cleanup is incomplete; resolve it before activating")
-		default:
+		case errors.Is(err, admin.ErrConflict):
+			writeError(w, http.StatusConflict, "cluster-admin state is changing; reload and retry")
+		case errors.Is(err, admin.ErrInvalidReason), errors.Is(err, admin.ErrInvalidDuration), errors.Is(err, admin.ErrInvalidApproval):
 			writeError(w, http.StatusBadRequest, err.Error())
+		default:
+			s.writeKubeError(w, "write admin session", err)
 		}
 		return
 	}
-	saved, err := store.Save(ctx, admin.State{ResourceVersion: state.ResourceVersion, Record: record})
-	if err != nil {
-		if errors.Is(err, admin.ErrConflict) {
-			writeError(w, http.StatusConflict, "cluster-admin state changed; reload before activating")
-			return
-		}
-		s.writeKubeError(w, "write admin session", err)
-		return
-	}
+	record := saved.Record
 	s.log.Info("cluster-admin session requested",
 		"session", record.SessionID, "operator", caller.Login, "seconds", int64(record.ExpiresAt.Sub(record.ApprovedAt)/time.Second))
 	writeJSON(w, http.StatusAccepted, map[string]any{"phase": saved.Record.ObservedPhase, "sessionID": saved.Record.SessionID})
@@ -324,25 +344,19 @@ func (s *Server) handleAdminRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
-	store := s.adminStore()
-	state, err := store.Load(ctx)
+	// Revocation deliberately ignores the client's resourceVersion: the
+	// controller writes observations concurrently, and an emergency stop must
+	// never fail because a status snapshot went stale.
+	saved, err := s.updateSession(ctx, func(state admin.State) (admin.Record, error) {
+		return admin.RequestRevocation(state, time.Now())
+	})
 	if err != nil {
-		s.writeKubeError(w, "read admin session", err)
-		return
-	}
-	if request.ResourceVersion != "" && state.ResourceVersion != request.ResourceVersion {
-		writeError(w, http.StatusConflict, "cluster-admin state changed; reload before revoking")
-		return
-	}
-	record, err := admin.RequestRevocation(state, time.Now())
-	if err != nil {
-		writeError(w, http.StatusConflict, "no cluster-admin session is active")
-		return
-	}
-	saved, err := store.Save(ctx, admin.State{ResourceVersion: state.ResourceVersion, Record: record})
-	if err != nil {
+		if errors.Is(err, admin.ErrNoSession) {
+			writeError(w, http.StatusConflict, "no cluster-admin session is active")
+			return
+		}
 		if errors.Is(err, admin.ErrConflict) {
-			writeError(w, http.StatusConflict, "cluster-admin state changed; reload before revoking")
+			writeError(w, http.StatusConflict, "cluster-admin state is changing; retry the revocation")
 			return
 		}
 		s.writeKubeError(w, "write admin session", err)
