@@ -215,6 +215,25 @@ jobs:
             exit 1
           fi
 
+          # The agent-types extension, and the subagent types it ships as data. The entrypoint
+          # seeds them into the workspace home (copy-if-missing, above); the module must load and
+          # install its tool and section wraps, and the running app must not have failed it.
+          docker exec smoke test -f /workspace/home/.pi/agent/agents/architect.md
+          docker exec smoke test -f /workspace/home/.pi/agent/agents/coder.md
+          docker exec smoke test -f /workspace/home/.pi/agent/agents/reviewer.md
+          docker exec smoke test -f /workspace/home/.pi/agent/agents/_readme.md
+          docker exec --workdir /opt/pi-pocket smoke node --input-type=module -e '
+            const { default: createAgentTypes } = await import("/opt/pi-pocket/src/server/extensions/agent-types.ts");
+            const extension = createAgentTypes({ notice() {}, agentDir: "/usr/share/pi-agent" });
+            if (extension.name !== "agent-types") throw new Error("unexpected extension name: " + extension.name);
+            if (extension.wraps?.length !== 2) throw new Error("the tool and section wraps were not installed");
+            console.log("agent-types extension ok");
+          '
+          if grep -qF 'agent-types.ts failed to load' <<<"${logs}"; then
+            echo "::error::the agent-types extension failed to load in the running app"
+            exit 1
+          fi
+
           # Node 24 with its built-in SQLite, plus the upstream runtime dependencies.
           docker exec smoke node -e 'const { DatabaseSync } = require("node:sqlite"); new DatabaseSync(":memory:").exec("select 1"); console.log("node:sqlite ok")'
           docker exec --workdir /opt/pi-pocket smoke node -e 'import("jiti").then(() => console.log("jiti ok"))'

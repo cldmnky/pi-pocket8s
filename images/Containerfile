@@ -248,6 +248,39 @@ RUN set -eux; \
 COPY --chown=1000:1000 extensions/web-search.ts /opt/pi-pocket/src/server/extensions/web-search.ts
 COPY --chown=1000:1000 extensions/web-search/ /opt/pi-pocket/src/server/extensions/web-search/
 
+# Preconfigured subagent types: shipped as a second Pi Pocket built-in extension, so a fresh
+# workspace can hand work to an architect, a coder, and an independent reviewer without any
+# setup. The type definitions are data, not code: the image keeps its copies beside the shipped
+# skill and prompt template, and the entrypoint seeds the ones that are missing into
+# ~/.pi/agent/agents/ — the editable copy the agent reads. See
+# extensions/agent-types/_readme.md for the format and the workflow.
+COPY --chown=1000:1000 extensions/agent-types.ts /opt/pi-pocket/src/server/extensions/agent-types.ts
+COPY --chown=1000:1000 extensions/agent-types/ /usr/share/pi-agent/agents/
+
+# Fail the build if the extension stops loading, stops installing its wrap, or if a shipped
+# type definition loses its frontmatter. `node` runs the TypeScript as it is.
+RUN set -eux; \
+    cd /opt/pi-pocket; \
+    test -f /usr/share/pi-agent/agents/architect.md; \
+    test -f /usr/share/pi-agent/agents/coder.md; \
+    test -f /usr/share/pi-agent/agents/reviewer.md; \
+    node --input-type=module -e ' \
+        const { readdirSync, readFileSync } = await import("node:fs"); \
+        const { default: createAgentTypes } = await import("/opt/pi-pocket/src/server/extensions/agent-types.ts"); \
+        const extension = createAgentTypes({ notice() {}, agentDir: "/usr/share/pi-agent" }); \
+        if (extension.name !== "agent-types") throw new Error("unexpected extension name: " + extension.name); \
+        if (extension.wraps?.length !== 2) throw new Error("expected a tool wrap and a section wrap, got " + (extension.wraps?.length ?? 0)); \
+        for (const file of readdirSync("/usr/share/pi-agent/agents").filter((each) => each.endsWith(".md") && !each.startsWith("_"))) { \
+            const text = readFileSync("/usr/share/pi-agent/agents/" + file, "utf8"); \
+            const block = /^---\n([\s\S]*?)\n---\n/.exec(text); \
+            if (block === null) throw new Error(file + " has no frontmatter"); \
+            for (const key of ["model", "thinking", "tools", "description"]) { \
+                if (!new RegExp("^" + key + ": ", "m").test(block[1])) throw new Error(file + " is missing " + key); \
+            } \
+        } \
+        console.log("agent-types extension ok"); \
+    '
+
 # Fail the build if the extension stops loading or stops installing its tool. `node` runs the
 # TypeScript as it is; the module imports only what the image already has.
 RUN set -eux; \

@@ -34,6 +34,7 @@ Focused runs:
 .venv/bin/python tests/test_chart.py                                  # one file
 cd portal && go test -race ./internal/server/ -run TestName           # one test
 node --test extensions/web-search.test.mjs                           # one node test
+node --test extensions/agent-types.test.mjs                          # the shipped subagent types
 helm template pi-pocket charts/pi-pocket -n test-pocket -f deploy/openshift-values.yaml
 ```
 
@@ -61,7 +62,7 @@ make portal-image   # portal image (context is portal/)
 | `charts/pi-pocket/` | The Helm chart: deployments, PVC, RBAC, ingresses, NetworkPolicy, Secret handling, `validate.yaml` fail-fast guards |
 | `portal/` | Go module (`github.com/cldmnky/pi-pocket8s/portal`): HTTP server, embedded vanilla-JS SPA in `web/`, kube client, GitHub App/OAuth code. Tests sit next to the code as `*_test.go` |
 | `images/` | Containerfile for the workspace image, `entrypoint.sh`, `embed-patch.sh`, and Node ESM helpers with `*.test.mjs` tests |
-| `extensions/` | `web-search.ts` plus `web-search/`: the agent's `web_search` tool, installed by the Containerfile as a Pi Pocket built-in extension. The provider code under `web-search/vendor/` is vendored third-party code (MIT, see its `NOTICE.md`): copy a new release rather than editing it |
+| `extensions/` | `web-search.ts` plus `web-search/`: the agent's `web_search` tool; `agent-types.ts` plus `agent-types/`: preconfigured subagent types (`architect`, `coder`, `reviewer`) and the defaults the entrypoint seeds into `~/.pi/agent/agents/`. Both are installed by the Containerfile as Pi Pocket built-in extensions. The provider code under `web-search/vendor/` is vendored third-party code (MIT, see its `NOTICE.md`): copy a new release rather than editing it |
 | `tests/test_chart.py` | Renders the real chart and asserts security/lifecycle contracts |
 | `deploy/openshift-values.yaml` | The example cluster profile used by tests, lint and `make install` |
 | `docs/research.md` | Sources and live-cluster evidence behind the design choices |

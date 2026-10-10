@@ -79,7 +79,7 @@ prepare_directories() {
     fi
 }
 
-# Seed the shipped Pi skill and prompt template into the workspace home.
+# Seed the shipped Pi skill, prompt template, and subagent types into the workspace home.
 # Copy-if-missing: in-pod edits survive restarts, and deleting a file re-seeds
 # the shipped copy on the next start (the update path for existing volumes).
 seed_pi_agent_files() {
@@ -102,6 +102,27 @@ seed_pi_agent_files() {
             fi
         else
             warn "shipped Pi agent file missing: ${from}"
+        fi
+    done
+
+    # The subagent types the image ships (extensions/agent-types/), every *.md including the
+    # _readme.md that documents the format. A file the workspace already has is left alone: that
+    # copy is the user's, and an image update must not undo an edit — or resurrect a type that
+    # was deliberately deleted. Delete the file to get the shipped copy back.
+    local file to
+    for file in "${src}/agents"/*.md; do
+        if [ ! -r "${file}" ]; then
+            continue
+        fi
+        to="${dest}/agents/$(basename "${file}")"
+        if [ -e "${to}" ]; then
+            continue
+        fi
+        mkdir -p "$(dirname "${to}")" 2>/dev/null || true
+        if cp "${file}" "${to}" 2>/dev/null; then
+            log "seeded ${to#$HOME_DIR/} from the image"
+        else
+            warn "cannot seed ${to}"
         fi
     done
 }
