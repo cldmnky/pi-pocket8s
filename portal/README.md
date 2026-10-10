@@ -38,7 +38,10 @@ portal's own CSP permits `frame-src` for the configured agent origin only.
   Lax) held only in server memory and re-validated against membership at
   least every 5 minutes (a required re-check that fails means access fails).
   Bearer-token login is **disabled** in this mode; cookie mutations require a
-  matching `Origin`, so there is no cookie-free bypass. GitHub mode also
+  matching `Origin`, so there is no cookie-free bypass. Cluster-admin elevation refuses token mode by default for the same reason:
+  a namespace-admin workspace can read the portal token Secret, so the shared
+  token must not silently become an elevation credential. The explicit
+  `adminElevation.allowTokenAuth` opt-in accepts that tradeoff for lab use. GitHub mode also
   enables the credential broker (see below) and requires the portal to run in
   a different namespace from the agent's (`POCKET_NAMESPACE` names that
   workspace namespace; startup refuses same-namespace GitHub mode because the
@@ -113,6 +116,7 @@ portal's own CSP permits `frame-src` for the configured agent origin only.
 | `ADMIN_OPERATORS` | elevation | Comma-separated **numeric** GitHub user IDs allowed to activate. Organization ownership is not sufficient; logins can be renamed. |
 | `ADMIN_DEFAULT_DURATION_SECONDS` / `ADMIN_MAX_DURATION_SECONDS` | elevation | Session bounds: default 900, maximum 1800, hard maximum 3600. |
 | `ADMIN_RECENT_LOGIN_SECONDS` | elevation | How recent a GitHub sign-in must be for activation and sign-in-link retrieval (revocation is exempt). |
+| `ADMIN_ALLOW_TOKEN_AUTH` | elevation | `true` accepts elevation with token authentication: the shared portal token becomes an elevation credential, there is no per-person allowlist or recent-login rule, and the sign-in link is available to any token holder. Default `false`, where elevation requires GitHub mode. |
 | `ADMIN_STARTUP_TIMEOUT_SECONDS` | elevation | How long activation waits for the admin workspace to become ready before revoking. |
 | `ADMIN_BOOTSTRAP` | controller | Explicit installer action: the controller verifies the predefined binding and Deployment at startup and refuses to run if they are missing or not the managed objects. |
 | `ADMIN_RECONCILE_SECONDS` / `ADMIN_HEALTH_ADDR` | controller | Reconciliation interval (default 5) and health endpoint (default `:8090`). |

@@ -528,6 +528,7 @@ func TestValidateActivationBounds(t *testing.T) {
 		"long reason":   func(r *ActivationRequest) { r.Reason = strings.Repeat("x", ReasonLimit+1) },
 		"control chars": func(r *ActivationRequest) { r.Reason = "ok\x00bad" },
 		"no operator":   func(r *ActivationRequest) { r.ApprovedByUserID = 0 },
+		"no approver":   func(r *ActivationRequest) { r.ApprovedByLogin = "" },
 		"no session id": func(r *ActivationRequest) { r.SessionID = "" },
 		"too long":      func(r *ActivationRequest) { r.Duration = 3 * time.Minute },
 		"negative":      func(r *ActivationRequest) { r.Duration = -time.Minute },
@@ -546,6 +547,25 @@ func TestValidateActivationBounds(t *testing.T) {
 	record, err := ValidateActivation(idle, base, 90*time.Second, 2*time.Minute, time.Now())
 	if err != nil || record.ExpiresAt.Sub(record.ApprovedAt) != 90*time.Second {
 		t.Fatalf("default duration not applied: %v %v", record.ExpiresAt, err)
+	}
+}
+
+func TestTokenOperatorApprovalIsExplicit(t *testing.T) {
+	idle := State{ResourceVersion: "1", Record: Record{ObservedPhase: PhaseIdle}}
+	// A token-mode approval has no GitHub user ID; it is accepted only when the
+	// caller says so explicitly, so a GitHub-mode caller cannot accidentally
+	// record an identity-less approval.
+	request := ActivationRequest{Reason: "why", ApprovedByLogin: "token-operator", SessionID: "sid", TokenOperator: true}
+	record, err := ValidateActivation(idle, request, time.Minute, 2*time.Minute, time.Now())
+	if err != nil {
+		t.Fatalf("token approval rejected: %v", err)
+	}
+	if record.ApprovedByUserID != 0 || record.ApprovedByLogin != "token-operator" {
+		t.Fatalf("unexpected approver: %s", record.Describe())
+	}
+	request.TokenOperator = false
+	if _, err := ValidateActivation(idle, request, time.Minute, 2*time.Minute, time.Now()); !errors.Is(err, ErrInvalidApproval) {
+		t.Fatal("identity-less approval accepted without the token flag")
 	}
 }
 

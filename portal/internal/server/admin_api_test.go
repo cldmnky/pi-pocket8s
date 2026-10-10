@@ -486,6 +486,112 @@ func TestAdminStatusTreatsStaleAndMalformedStateAsUncertain(t *testing.T) {
 	}
 }
 
+// TestAdminTokenModeElevation exercises the explicit token-auth opt-in: the
+// bearer token is the operator, activation records a token approver, and the
+// sign-in link is available to any holder of that token.
+func TestAdminTokenModeElevation(t *testing.T) {
+	api := newAdminAPI()
+	server := httptest.NewTLSServer(api)
+	defer server.Close()
+	dir := t.TempDir()
+	cert, err := x509.ParseCertificate(server.TLS.Certificates[0].Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	caPath := filepath.Join(dir, "ca.crt")
+	tokenPath := filepath.Join(dir, "portal-token")
+	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tokenPath, []byte("0123456789abcdef0123456789abcdef"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client, err := kube.NewClient(server.URL, caPath, tokenPath, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{
+		Namespace: "pi-pocket", PortalNamespace: "management", Deployment: "pi-pocket",
+		ConfigSecret: "pi-pocket-runtime", PocketURL: "https://pocket.example.com",
+		PortalOrigin: "https://portal.example", TokenFile: tokenPath, AuthMode: "token",
+		Admin: config.AdminConfig{
+			Enabled: true, AllowTokenAuth: true,
+			Namespace: "pi-pocket-admin", Deployment: "pi-pocket-admin", ServiceAccount: "pi-pocket-admin",
+			RuntimeSecret: "pi-pocket-admin-runtime", PocketURL: "https://pocket-admin.example.com",
+			SessionSecret: "admin-session", ClusterRoleBinding: "pi-pocket-admin-cluster-admin",
+			ClusterRole: "cluster-admin", Operators: []int64{42},
+			DefaultDuration: 15 * time.Minute, MaxDuration: 30 * time.Minute,
+			RecentLogin: 15 * time.Minute, StartupTimeout: 3 * time.Minute,
+		},
+	}
+	handler := New(cfg, client, nil, fstest.MapFS{}).Handler()
+	call := func(method, path, body string, withToken bool) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		if withToken {
+			r.Header.Set("Authorization", "Bearer 0123456789abcdef0123456789abcdef")
+		}
+		if method == http.MethodPost {
+			r.Header.Set("Origin", "https://portal.example")
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	// Without the token there is no operator, and the token-mode operator is not
+	// required to appear on the GitHub allowlist.
+	if w := call("GET", "/api/admin/status", "", false); w.Code != 401 {
+		t.Fatalf("anonymous status: %d", w.Code)
+	}
+	status := decodeInto[struct {
+		Enabled         bool   `json:"enabled"`
+		IsOperator      bool   `json:"isOperator"`
+		CanActivate     bool   `json:"canActivate"`
+		ResourceVersion string `json:"resourceVersion"`
+	}](t, call("GET", "/api/admin/status", "", true))
+	if !status.Enabled || !status.IsOperator || !status.CanActivate {
+		t.Fatalf("token operator not authorized: %+v", status)
+	}
+	if w := call("POST", "/api/admin/activate", `{"resourceVersion":"`+status.ResourceVersion+`","reason":"token-mode validation","durationSeconds":300,"confirmation":"cluster-admin"}`, true); w.Code != 202 {
+		t.Fatalf("token-mode activation: %d %s", w.Code, w.Body)
+	}
+	record := api.record()
+	if record.ApprovedByLogin != "token-operator" || record.ApprovedByUserID != 0 || record.RequestedState != admin.RequestedActive {
+		t.Fatalf("unexpected approver: %s", record.Describe())
+	}
+	// The link is ownerless in token mode: any token holder may retrieve it.
+	now := time.Now()
+	api.setSession(admin.Record{
+		SessionID: record.SessionID, RequestedState: admin.RequestedActive, ApprovedByLogin: "token-operator",
+		Reason: "token-mode validation", ApprovedAt: now, ExpiresAt: now.Add(5 * time.Minute),
+		ObservedPhase: admin.PhaseActive, GrantObserved: true, WorkspaceReady: true,
+		ActivePodUID: "pod-1", LastReconciledAt: now,
+	})
+	api.setRuntime(map[string]string{
+		kube.OwnerLoginURLKey:    "https://pocket-admin.example.com/login?token=owner-secret",
+		kube.OwnerLoginPodUIDKey: "pod-1",
+	})
+	if w := call("POST", "/api/admin/access", `{}`, true); w.Code != 200 || !strings.Contains(w.Body.String(), "owner-secret") {
+		t.Fatalf("token-mode access: %d %s", w.Code, w.Body)
+	}
+	// And revocation works the same way.
+	if w := call("POST", "/api/admin/revoke", `{}`, true); w.Code != 202 {
+		t.Fatalf("token-mode revocation: %d %s", w.Code, w.Body)
+	}
+	if record := api.record(); record.RequestedState != admin.RequestedRevoked {
+		t.Fatalf("not revoked: %s", record.Describe())
+	}
+	// Without the explicit opt-in the same configuration refuses elevation.
+	cfg.Admin.AllowTokenAuth = false
+	handler = New(cfg, client, nil, fstest.MapFS{}).Handler()
+	r := httptest.NewRequest("GET", "/api/admin/status", nil)
+	r.Header.Set("Authorization", "Bearer 0123456789abcdef0123456789abcdef")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if w.Code != 403 {
+		t.Fatalf("token mode without the opt-in: %d %s", w.Code, w.Body)
+	}
+}
+
 func decodeInto[T any](t *testing.T, w *httptest.ResponseRecorder) T {
 	t.Helper()
 	var value T

@@ -475,6 +475,35 @@ class ChartTests(unittest.TestCase):
             "pin a full commit sha: the build checks git rev-parse HEAD against it",
         )
 
+    def test_token_auth_elevation_requires_explicit_opt_in(self):
+        options = ["--set", "portal.namespace=management", "--set", "portal.github.clientID=client",
+                   "--set", "portal.github.appID=123", "--set", "portal.github.installationID=456",
+                   "--set", "portal.github.organization=blahonga", "--set", "portal.github.existingSecret=github-app",
+                   "--set", "adminElevation.enabled=true", "--set", "adminElevation.bootstrap=true",
+                   "--set", "adminElevation.namespace=admin-ns", "--set", "adminElevation.deployment=pi-pocket-admin",
+                   "--set", "adminElevation.serviceAccount=pi-pocket-admin",
+                   "--set", "adminElevation.runtimeSecret=pi-pocket-admin-runtime",
+                   "--set", "adminElevation.pocketURL=https://pocket-admin.example.com",
+                   "--set", "adminElevation.operators[0]=42"]
+        # Token authentication is refused unless the opt-in is explicit.
+        with self.assertRaises(subprocess.CalledProcessError):
+            render(*options, "--set", "portal.authMode=token")
+        docs = render(*options, "--set", "portal.authMode=token",
+                      "--set", "adminElevation.allowTokenAuth=true")
+        portal = find(docs, "Deployment", "pi-pocket-portal")["spec"]["template"]["spec"]
+        env = {item["name"]: item.get("value") for item in portal["containers"][0]["env"]}
+        self.assertEqual(env["PORTAL_AUTH_MODE"], "token")
+        self.assertEqual(env["ADMIN_ALLOW_TOKEN_AUTH"], "true")
+        # The controller never receives the portal's auth decision.
+        controller = find(docs, "Deployment", "pi-pocket-admin-controller")["spec"]["template"]["spec"]
+        controller_env = {item["name"]: item.get("value") for item in controller["containers"][0]["env"]}
+        self.assertNotIn("ADMIN_ALLOW_TOKEN_AUTH", controller_env)
+        # And the default stays fail-closed.
+        docs = render(*options, "--set", "portal.authMode=github")
+        portal = find(docs, "Deployment", "pi-pocket-portal")["spec"]["template"]["spec"]
+        env = {item["name"]: item.get("value") for item in portal["containers"][0]["env"]}
+        self.assertEqual(env["ADMIN_ALLOW_TOKEN_AUTH"], "false")
+
     def test_reject_unsafe_options(self):
         for options in (("replicas=2",), ("openshift.pocketSCC=privileged",), ("serviceAccount.namespaceRole=cluster-admin",), ("ingress.pocketHost=",), ("ingress.portalHost=",), ("ingress.enabled=false",)):
             with self.subTest(options=options), self.assertRaises(subprocess.CalledProcessError):

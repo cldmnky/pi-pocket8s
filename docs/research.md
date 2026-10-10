@@ -274,6 +274,17 @@ matches the configured admin workspace. A replaced Pod therefore cannot serve a
 stale link, and the link never appears in `/api/config`, logs, or the session
 record.
 
+**Token-mode elevation is an explicit, documented opt-in.** The first release
+refused elevation in token authentication mode, because a namespace-admin
+workspace can read the portal token Secret and that credential must not become
+an elevation credential. Lab and test deployments still need to exercise the
+lifecycle without a browser OAuth round-trip, so `adminElevation.allowTokenAuth`
+(default `false`) permits it deliberately: the shared token becomes an elevation
+credential, sessions record a `token-operator` approver with no numeric ID, and
+the Pod-bound sign-in link is available to any token holder. Both layers enforce
+it — the chart fails the render and the portal refuses the request — and the
+default configuration is unchanged.
+
 **Authorization is numeric and recent.** Operators are listed by numeric GitHub
 user ID, because logins can be renamed and reused; organization ownership alone
 is not authorization to administer the cluster. Activation and link retrieval

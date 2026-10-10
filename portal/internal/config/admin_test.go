@@ -73,7 +73,10 @@ func TestElevationValidConfiguration(t *testing.T) {
 
 func TestElevationRejectsUnsafeConfigurations(t *testing.T) {
 	cases := map[string]func(map[string]string){
-		"token auth mode":              func(env map[string]string) { env["GITHUB_CLIENT_ID"] = ""; env["PORTAL_AUTH_MODE"] = "token" },
+		"token auth mode without the opt-in": func(env map[string]string) {
+			env["GITHUB_CLIENT_ID"] = ""
+			env["PORTAL_AUTH_MODE"] = "token"
+		},
 		"admin namespace is workspace": func(env map[string]string) { env["ADMIN_NAMESPACE"] = "workspace" },
 		"admin namespace is portal":    func(env map[string]string) { env["ADMIN_NAMESPACE"] = "management" },
 		"no operators":                 func(env map[string]string) { env["ADMIN_OPERATORS"] = "" },
@@ -98,9 +101,35 @@ func TestElevationRejectsUnsafeConfigurations(t *testing.T) {
 		setEnv(t, env)
 		if _, err := config.FromEnv(); err == nil {
 			t.Errorf("%s was accepted", name)
-		} else if !strings.Contains(err.Error(), "ADMIN") && name != "token auth mode" {
+		} else if !strings.Contains(err.Error(), "ADMIN") && name != "token auth mode without the opt-in" {
 			t.Errorf("%s produced an unrelated error: %v", name, err)
 		}
+	}
+}
+
+func TestElevationTokenAuthRequiresTheExplicitOptIn(t *testing.T) {
+	env := adminEnv()
+	env["GITHUB_CLIENT_ID"] = ""
+	env["PORTAL_AUTH_MODE"] = "token"
+	setEnv(t, env)
+	if _, err := config.FromEnv(); err == nil {
+		t.Fatal("token-mode elevation accepted without the explicit opt-in")
+	}
+	env["ADMIN_ALLOW_TOKEN_AUTH"] = "true"
+	setEnv(t, env)
+	cfg, err := config.FromEnv()
+	if err != nil {
+		t.Fatalf("explicit opt-in rejected: %v", err)
+	}
+	if !cfg.Admin.AllowTokenAuth || cfg.AuthMode != "token" {
+		t.Fatalf("opt-in not recorded: %+v", cfg.Admin)
+	}
+	// A disabled feature never validates its opt-in value.
+	env["ADMIN_ELEVATION_ENABLED"] = "false"
+	env["ADMIN_ALLOW_TOKEN_AUTH"] = "maybe"
+	setEnv(t, env)
+	if _, err := config.FromEnv(); err != nil {
+		t.Fatalf("disabled elevation validated the opt-in: %v", err)
 	}
 }
 

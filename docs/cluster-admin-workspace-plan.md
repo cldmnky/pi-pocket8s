@@ -239,7 +239,10 @@ credential.
 
 For the first release:
 
-- Reject elevation configuration in token-auth mode.
+- Reject elevation configuration in token-auth mode unless the installer sets
+  the explicit `adminElevation.allowTokenAuth` opt-in (added after the first
+  release; see below). With the opt-in the shared portal token becomes an
+  elevation credential, and sessions have no per-person owner.
 - Require the management namespace.
 - Do not treat organization ownership alone as authorization to administer the
   cluster.

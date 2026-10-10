@@ -124,7 +124,9 @@ portal:
   elevated workspace's credentials, storage, or home.
 - Activation requires GitHub sign-in, membership of the portal's login policy, an
   explicit numeric user-ID allowlist, a recent sign-in, a justification, and a
-  bounded duration (15 minutes by default, 30 maximum).
+  bounded duration (15 minutes by default, 30 maximum). Token authentication is
+  refused by default; the explicit `adminElevation.allowTokenAuth=true` opt-in
+  accepts that the shared portal token then becomes an elevation credential.
 - A reconciler in the management namespace applies the grant and removes it on
   expiry or revocation, independent of the portal and of any open browser. A
   session survives a portal restart; its deadline is never extended.

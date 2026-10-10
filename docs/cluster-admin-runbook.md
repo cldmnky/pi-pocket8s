@@ -65,6 +65,31 @@ Three namespaces are involved and all must differ:
    oc get pods -n pi-pocket-management -l app.kubernetes.io/component=admin-controller
    ```
 
+### Token authentication instead of GitHub
+
+Elevation refuses token authentication by default: a namespace-admin workspace
+can read a token-mode portal credential, and that credential must not become an
+elevation credential. For an isolated test or lab deployment you can accept that
+tradeoff explicitly:
+
+```bash
+--set portal.authMode=token --set adminElevation.allowTokenAuth=true
+```
+
+What changes with the opt-in:
+
+- **Every holder of the portal token can administer the cluster.** There is no
+  per-person allowlist and no recent-sign-in requirement, because there is no
+  sign-in event to age.
+- Sessions record `approvedByLogin: token-operator` with no numeric user ID, and
+  the sign-in link is available to any token holder rather than only to the
+  operator who activated the session.
+- Everything else is unchanged: the bounded duration, the automatic expiry, the
+  predefined inert binding, cleanup confirmation, and the Pod-bound link all
+  behave exactly as in GitHub mode.
+
+Treat this as a lab setting. In GitHub mode the default remains fail-closed.
+
 ## Activate
 
 Sign in to the portal as an authorized operator (numeric GitHub user ID in

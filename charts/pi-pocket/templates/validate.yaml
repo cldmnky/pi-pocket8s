@@ -68,7 +68,7 @@
 {{- end -}}
 {{- if .Values.adminElevation.enabled -}}
 {{- if ne .Values.workspace.mode "standard" -}}{{- fail "adminElevation.enabled requires workspace.mode=standard" -}}{{- end -}}
-{{- if ne .Values.portal.authMode "github" -}}{{- fail "adminElevation.enabled requires portal.authMode=github: elevation is refused in token-auth mode" -}}{{- end -}}
+{{- if and (ne .Values.portal.authMode "github") (not .Values.adminElevation.allowTokenAuth) -}}{{- fail "adminElevation.enabled requires portal.authMode=github, or the explicit adminElevation.allowTokenAuth=true opt-in: without it the shared portal token would become an elevation credential" -}}{{- end -}}
 {{- if not .Values.adminElevation.bootstrap -}}{{- fail "adminElevation.enabled requires adminElevation.bootstrap=true: the privileged controller RBAC and the inert binding are an explicit installer action" -}}{{- end -}}
 {{- range $key := list "namespace" "deployment" "serviceAccount" "runtimeSecret" "pocketURL" -}}
 {{- if empty (index $.Values.adminElevation $key) -}}{{- fail (printf "adminElevation.%s is required when elevation is enabled" $key) -}}{{- end -}}

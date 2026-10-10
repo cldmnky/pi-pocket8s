@@ -116,6 +116,10 @@ type ActivationRequest struct {
 	ApprovedByUserID int64
 	ApprovedByLogin  string
 	SessionID        string
+	// TokenOperator marks an approver identified by the portal token rather
+	// than by a GitHub identity. It is only ever set when elevation was
+	// configured with the explicit token-auth opt-in.
+	TokenOperator bool
 }
 
 // Errors returned to the portal. They carry no Kubernetes detail.
@@ -139,7 +143,10 @@ func ValidateActivation(state State, request ActivationRequest, defaultDuration,
 	if reason == "" || utf8.RuneCountInString(reason) > ReasonLimit || hasControlCharacters(reason) {
 		return Record{}, ErrInvalidReason
 	}
-	if request.ApprovedByUserID <= 0 || strings.TrimSpace(request.ApprovedByLogin) == "" || request.SessionID == "" {
+	if request.ApprovedByUserID <= 0 && !request.TokenOperator {
+		return Record{}, ErrInvalidApproval
+	}
+	if strings.TrimSpace(request.ApprovedByLogin) == "" || request.SessionID == "" {
 		return Record{}, ErrInvalidApproval
 	}
 	if request.Duration == 0 {

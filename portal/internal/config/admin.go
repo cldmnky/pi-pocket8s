@@ -30,6 +30,11 @@ type AdminConfig struct {
 	MaxDuration        time.Duration
 	RecentLogin        time.Duration
 	StartupTimeout     time.Duration
+	// AllowTokenAuth permits elevation in token authentication mode. It is
+	// false by default and must be set deliberately: with it, the shared portal
+	// token becomes an elevation credential, and every holder of that token can
+	// activate cluster-admin. GitHub mode remains the recommended configuration.
+	AllowTokenAuth bool
 }
 
 // IsOperator reports whether the numeric GitHub user ID may administer the
@@ -64,6 +69,11 @@ func adminFromEnv() (AdminConfig, error) {
 	if !enabled {
 		return admin, nil
 	}
+	allowToken, err := parseBool("ADMIN_ALLOW_TOKEN_AUTH", os.Getenv("ADMIN_ALLOW_TOKEN_AUTH"))
+	if err != nil {
+		return AdminConfig{}, err
+	}
+	admin.AllowTokenAuth = allowToken
 	if admin.ClusterRole == "" {
 		admin.ClusterRole = "cluster-admin"
 	}
@@ -136,8 +146,8 @@ func (a AdminConfig) validate(c *Config) error {
 	if !a.Enabled {
 		return nil
 	}
-	if c.AuthMode != "github" {
-		return fmt.Errorf("cluster-admin elevation requires GitHub authentication: a namespace-admin workspace can read a token-mode portal credential")
+	if c.AuthMode != "github" && !a.AllowTokenAuth {
+		return fmt.Errorf("cluster-admin elevation requires GitHub authentication: a namespace-admin workspace can read a token-mode portal credential, and that credential must not become an elevation credential (set adminElevation.allowTokenAuth to accept that tradeoff deliberately)")
 	}
 	if !isDNSLabel(a.Namespace) || !isDNSSubdomain(a.Deployment) || !isDNSSubdomain(a.ServiceAccount) {
 		return fmt.Errorf("ADMIN_NAMESPACE, ADMIN_DEPLOYMENT and ADMIN_SERVICE_ACCOUNT must be valid Kubernetes names")

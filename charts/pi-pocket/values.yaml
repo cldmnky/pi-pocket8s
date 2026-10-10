@@ -129,6 +129,11 @@ adminElevation:
   clusterRoleBinding: ""
   # Numeric GitHub user IDs allowed to activate. Empty denies every activation.
   operators: []
+  # Token-auth opt-in. false (default) refuses elevation unless portal.authMode is
+  # github. true accepts that the shared portal token becomes an elevation
+  # credential: every holder of that token can activate cluster-admin, and
+  # sessions have no per-person owner. GitHub mode remains the recommended setup.
+  allowTokenAuth: false
   # Bounded session lifetime in seconds; default < max, both <= 3600.
   defaultDurationSeconds: 900
   maxDurationSeconds: 1800

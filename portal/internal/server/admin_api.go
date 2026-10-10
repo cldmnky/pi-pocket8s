@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/cldmnky/pi-pocket8s/portal/internal/admin"
-	"github.com/cldmnky/pi-pocket8s/portal/internal/githubapp"
 	"github.com/cldmnky/pi-pocket8s/portal/internal/githubauth"
 	"github.com/cldmnky/pi-pocket8s/portal/internal/kube"
 )
@@ -77,48 +76,77 @@ func (s *Server) adminStore() admin.Store {
 	return &admin.SecretStore{Client: s.kube, Namespace: s.cfg.PortalNamespace, Name: s.cfg.Admin.SessionSecret}
 }
 
+// adminIdentity is the authenticated caller of an admin endpoint. In GitHub
+// mode it carries the numeric GitHub user ID and login; in the explicit
+// token-auth opt-in it marks the shared-token holder, who has no per-person
+// identity.
+type adminIdentity struct {
+	UserID    int64
+	Login     string
+	TokenMode bool
+}
+
 // adminCaller resolves the authenticated operator behind a request. It fails
-// closed when elevation is disabled, GitHub authentication is off, or the
-// numeric GitHub user ID is not on the allowlist.
-func (s *Server) adminCaller(w http.ResponseWriter, r *http.Request) (githubapp.User, bool) {
+// closed when elevation is disabled, when the caller is not on the allowlist,
+// or when token authentication is in use without the explicit opt-in.
+func (s *Server) adminCaller(w http.ResponseWriter, r *http.Request) (adminIdentity, bool) {
 	if !s.cfg.Admin.Enabled {
 		writeError(w, http.StatusForbidden, "cluster-admin elevation is not enabled on this portal")
-		return githubapp.User{}, false
+		return adminIdentity{}, false
 	}
-	if s.sessions == nil {
+	if s.cfg.AuthMode == "github" {
+		if s.sessions == nil {
+			writeError(w, http.StatusForbidden, "GitHub authentication is unavailable")
+			return adminIdentity{}, false
+		}
+		user, err := s.sessions.Authorize(r)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "GitHub session denied or unavailable")
+			return adminIdentity{}, false
+		}
+		if !s.cfg.Admin.IsOperator(user.ID) {
+			s.log.Warn("cluster-admin action denied", "action", r.URL.Path, "login", user.Login)
+			writeError(w, http.StatusForbidden, "this account is not an authorized cluster-admin operator")
+			return adminIdentity{}, false
+		}
+		return adminIdentity{UserID: user.ID, Login: user.Login}, true
+	}
+	// Token mode: the bearer token was already verified by the api() wrapper.
+	// This is the deliberate tradeoff of adminElevation.allowTokenAuth — every
+	// holder of the portal token can administer the cluster.
+	if !s.cfg.Admin.AllowTokenAuth {
 		writeError(w, http.StatusForbidden, "cluster-admin elevation requires GitHub authentication")
-		return githubapp.User{}, false
+		return adminIdentity{}, false
 	}
-	user, err := s.sessions.Authorize(r)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "GitHub session denied or unavailable")
-		return githubapp.User{}, false
-	}
-	if !s.cfg.Admin.IsOperator(user.ID) {
-		s.log.Warn("cluster-admin action denied", "action", r.URL.Path, "login", user.Login)
-		writeError(w, http.StatusForbidden, "this account is not an authorized cluster-admin operator")
-		return githubapp.User{}, false
-	}
-	return user, true
+	return adminIdentity{Login: "token-operator", TokenMode: true}, true
 }
 
 // adminCallerRecent additionally requires a recent sign-in. Activation and
 // sign-in-link retrieval use it; revocation deliberately does not, so an
-// emergency shutdown never depends on a fresh login.
-func (s *Server) adminCallerRecent(w http.ResponseWriter, r *http.Request) (githubapp.User, bool) {
-	user, ok := s.adminCaller(w, r)
+// emergency shutdown never depends on a fresh login. Token mode has no
+// sign-in event to age, so the requirement does not apply there.
+func (s *Server) adminCallerRecent(w http.ResponseWriter, r *http.Request) (adminIdentity, bool) {
+	caller, ok := s.adminCaller(w, r)
 	if !ok {
-		return githubapp.User{}, false
+		return adminIdentity{}, false
+	}
+	if caller.TokenMode {
+		return caller, true
 	}
 	if _, err := s.sessions.AuthorizeRecent(r, s.cfg.Admin.RecentLogin); err != nil {
 		if errors.Is(err, githubauth.ErrStaleLogin) {
 			writeError(w, http.StatusForbidden, "a recent GitHub sign-in is required for this action")
-			return githubapp.User{}, false
+			return adminIdentity{}, false
 		}
 		writeError(w, http.StatusUnauthorized, "GitHub session denied or unavailable")
-		return githubapp.User{}, false
+		return adminIdentity{}, false
 	}
-	return user, true
+	return caller, true
+}
+
+// isOperator reports whether the caller may administer the cluster.
+func (s *Server) isOperator(caller adminIdentity) bool {
+	return caller.TokenMode || s.cfg.Admin.IsOperator(caller.UserID)
 }
 
 func (s *Server) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
@@ -138,7 +166,7 @@ func (s *Server) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
 			// Malformed state is a cleanup-required condition, not a server error.
 			s.log.Error("admin session state is malformed")
 			state.Record = admin.Record{ObservedPhase: admin.PhaseCleanupRequired, FailureCode: admin.FailureStateInvalid}
-			writeJSON(w, http.StatusOK, s.adminView(user, user, state, admin.PhaseCleanupRequired, false))
+			writeJSON(w, http.StatusOK, s.adminView(user, state, admin.PhaseCleanupRequired, false))
 			return
 		}
 		s.writeKubeError(w, "read admin session", err)
@@ -153,12 +181,12 @@ func (s *Server) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
 		phase = admin.PhaseCleanupRequired
 	}
 	_, recentErr := s.sessions.AuthorizeRecent(r, s.cfg.Admin.RecentLogin)
-	view := s.adminView(user, user, state, phase, fresh)
+	view := s.adminView(user, state, phase, fresh)
 	view.NeedsRecentLogin = errors.Is(recentErr, githubauth.ErrStaleLogin)
 	writeJSON(w, http.StatusOK, view)
 }
 
-func (s *Server) adminView(_ githubapp.User, caller githubapp.User, state admin.State, phase admin.Phase, fresh bool) adminStatusResponse {
+func (s *Server) adminView(caller adminIdentity, state admin.State, phase admin.Phase, fresh bool) adminStatusResponse {
 	record := state.Record
 	now := time.Now()
 	view := adminStatusResponse{
@@ -167,7 +195,7 @@ func (s *Server) adminView(_ githubapp.User, caller githubapp.User, state admin.
 		Deployment:             s.cfg.Admin.Deployment,
 		PocketURL:              s.cfg.Admin.PocketURL,
 		TerminalURL:            s.cfg.Admin.TerminalURL,
-		IsOperator:             s.cfg.Admin.IsOperator(caller.ID),
+		IsOperator:             s.isOperator(caller),
 		DefaultDurationSeconds: int64(s.cfg.Admin.DefaultDuration / time.Second),
 		MaxDurationSeconds:     int64(s.cfg.Admin.MaxDuration / time.Second),
 		ResourceVersion:        state.ResourceVersion,
@@ -197,13 +225,13 @@ func (s *Server) adminView(_ githubapp.User, caller githubapp.User, state admin.
 	idle := phase == admin.PhaseIdle || phase == ""
 	view.CanActivate = view.IsOperator && idle
 	view.CanRevoke = view.IsOperator && record.Active()
-	owner := record.SessionID != "" && record.ApprovedByUserID == caller.ID && record.ApprovedByUserID != 0
+	owner := caller.TokenMode || (record.SessionID != "" && record.ApprovedByUserID != 0 && record.ApprovedByUserID == caller.UserID)
 	view.CanOpen = view.IsOperator && owner && phase == admin.PhaseActive && fresh && record.WorkspaceReady
 	return view
 }
 
 func (s *Server) handleAdminActivate(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.adminCallerRecent(w, r)
+	caller, ok := s.adminCallerRecent(w, r)
 	if !ok {
 		return
 	}
@@ -250,9 +278,10 @@ func (s *Server) handleAdminActivate(w http.ResponseWriter, r *http.Request) {
 	record, err := admin.ValidateActivation(state, admin.ActivationRequest{
 		Reason:           request.Reason,
 		Duration:         duration,
-		ApprovedByUserID: user.ID,
-		ApprovedByLogin:  user.Login,
+		ApprovedByUserID: caller.UserID,
+		ApprovedByLogin:  caller.Login,
 		SessionID:        sessionID,
+		TokenOperator:    caller.TokenMode,
 	}, s.cfg.Admin.DefaultDuration, s.cfg.Admin.MaxDuration, time.Now())
 	if err != nil {
 		switch {
@@ -275,12 +304,12 @@ func (s *Server) handleAdminActivate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("cluster-admin session requested",
-		"session", record.SessionID, "operator", user.Login, "seconds", int64(record.ExpiresAt.Sub(record.ApprovedAt)/time.Second))
+		"session", record.SessionID, "operator", caller.Login, "seconds", int64(record.ExpiresAt.Sub(record.ApprovedAt)/time.Second))
 	writeJSON(w, http.StatusAccepted, map[string]any{"phase": saved.Record.ObservedPhase, "sessionID": saved.Record.SessionID})
 }
 
 func (s *Server) handleAdminRevoke(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.adminCaller(w, r)
+	caller, ok := s.adminCaller(w, r)
 	if !ok {
 		return
 	}
@@ -319,7 +348,7 @@ func (s *Server) handleAdminRevoke(w http.ResponseWriter, r *http.Request) {
 		s.writeKubeError(w, "write admin session", err)
 		return
 	}
-	s.log.Info("cluster-admin session revocation requested", "session", saved.Record.SessionID, "operator", user.Login)
+	s.log.Info("cluster-admin session revocation requested", "session", saved.Record.SessionID, "operator", caller.Login)
 	writeJSON(w, http.StatusAccepted, map[string]any{"phase": saved.Record.ObservedPhase})
 }
 
@@ -328,7 +357,7 @@ func (s *Server) handleAdminRevoke(w http.ResponseWriter, r *http.Request) {
 // session, only while the workspace is ready and freshly observed, and only
 // when the stored Pod UID still matches the observed one.
 func (s *Server) handleAdminAccess(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.adminCallerRecent(w, r)
+	caller, ok := s.adminCallerRecent(w, r)
 	if !ok {
 		return
 	}
@@ -340,7 +369,11 @@ func (s *Server) handleAdminAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	record := state.Record
-	if record.SessionID == "" || record.ApprovedByUserID != user.ID {
+	// Token mode has no per-person identity, so every holder of the portal token
+	// is treated as the session's owner. That is the documented consequence of
+	// the explicit allowTokenAuth opt-in.
+	owner := caller.TokenMode || (record.ApprovedByUserID != 0 && record.ApprovedByUserID == caller.UserID)
+	if record.SessionID == "" || !owner {
 		writeError(w, http.StatusForbidden, "only the operator who activated this session may retrieve its sign-in link")
 		return
 	}

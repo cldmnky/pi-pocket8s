@@ -125,6 +125,8 @@ spec:
               value: {{ include "pocket.adminClusterRoleBinding" . | quote }}
             - name: ADMIN_CLUSTER_ROLE
               value: {{ .Values.adminElevation.clusterRole | quote }}
+            - name: ADMIN_ALLOW_TOKEN_AUTH
+              value: {{ .Values.adminElevation.allowTokenAuth | quote }}
             - name: ADMIN_OPERATORS
               value: {{ join "," $operators | quote }}
             - name: ADMIN_DEFAULT_DURATION_SECONDS
