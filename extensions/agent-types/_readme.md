@@ -39,5 +39,6 @@ file at once. Trivial changes skip all of this.
   worktree (New session → worktree) and every subagent it spawns works there too.
 - "Read-only" is enforced by the tool list: `architect` and `reviewer` have no `write` or `edit`. `bash` can still
   change files, so it is a prompt-level rule unless Lancet Guard is on, which checks bash calls.
-- `thinking` must be a level the model offers; the model picker lists them. The `opencode-go` models here offer
-  `low`, `high`, and `max` — `medium` is not among them — which is why the types above use `max` and `high`.
+- `thinking` must be a level the model offers; the model picker lists them. A level a model lacks becomes the
+  nearest it has. The `opencode-go` models here offer `low`, `high`, and `max` — `medium` is not among them — which
+  is why the types above use `max` and `high`.

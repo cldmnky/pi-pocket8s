@@ -2,7 +2,7 @@ apiVersion: v2
 name: pi-pocket
 description: Persistent pi-pocket developer workspace and configuration portal for OpenShift
 version: 0.1.0
-appVersion: "0.11.0"
+appVersion: "0.12.2"
 type: application
 kubeVersion: ">=1.33.0-0"
 home: https://github.com/cldmnky/pi-pocket8s

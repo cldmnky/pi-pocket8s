@@ -43,8 +43,10 @@ type AgentType = {
 
 /**
  * Pi's own thinking levels (`ModelThinkingLevel`), in its order. The built-in subagent tool's schema
- * offers only the first six, so a type could not ask for `max` — the one level some models have, such
- * as Kimi K3 — even though the runtime takes it. The wrapped schema below widens the union back.
+ * offered only the first six before 0.12.2, so a type could not ask for `max` — the only level some
+ * models have, such as Kimi K3 — even though the runtime took it. The wrapped schema below rebuilds
+ * the union from this list, which keeps a type working on either version, and carries the level's
+ * own description across.
  */
 const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -145,7 +147,20 @@ export default function createAgentTypes(host: PocketHost) {
                 " Optional type: a preconfigured agent type (see the subagents section for the list); its model and brief are applied and win over yours, its thinking and tools where you set none.",
             parameters: Type.Object({
                 ...builtIn.parameters.properties,
-                thinking: Type.Optional(Type.Union(THINKING.map((level) => Type.Literal(level)))),
+                thinking: Type.Optional(
+                    Type.Union(
+                        THINKING.map((level) => Type.Literal(level)),
+                        // Keep whatever the built-in says about the level: it is what the model reads.
+                        (builtIn.parameters.properties.thinking as { description?: string } | undefined)
+                            ?.description === undefined
+                            ? {}
+                            : {
+                                  description: (
+                                      builtIn.parameters.properties.thinking as { description: string }
+                                  ).description,
+                              },
+                    ),
+                ),
                 type: Type.Optional(
                     Type.String({
                         description: "spawn only: a preconfigured agent type by name, which brings its own model, thinking, tools, and brief.",
