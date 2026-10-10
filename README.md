@@ -346,6 +346,19 @@ around, and the type's `thinking` level must be one the model offers (the model 
 `opencode-go` offers `low`, `high`, and `max`). Nothing here is specific to OpenCode: point a type
 at any model the install is signed in to.
 
+Two things about subagents are worth knowing, because both looked like "the subagent never answered":
+
+- **A subagent whose run fails reports that.** It used to wait for good, so the parent heard nothing
+  and *Running now* kept saying it waited for an answer that could not come — which is what the
+  pinned upstream (0.12.2) fixes. If a subagent seems silent, ask for `status`, or open its
+  conversation: a failed run is in its transcript with the provider's error.
+- **`kimi-k3` needed a fix to work with tools at all.** The `opencode-go` catalog advertises it as
+  supporting OpenAI strict-mode tools, but the gateway's upstream rejects Pi's tool schemas in strict
+  mode, so every tool-using request to it failed with HTTP 400 — an architect subagent that could
+  never answer. The image ships a `models.json` that turns that flag off for the one model
+  (`pi-agent/models.json`, seeded into `~/.pi/agent/models.json`; an existing file is merged, not
+  replaced). Remove the override once upstream's catalog stops claiming strict mode.
+
 ## Development tools and cluster access
 
 See `images/README.md` for exact bundled versions, package sources and nested Podman limitations. The image integrates tools rather than mounting another image: an image-volume containing `/usr/bin` cannot supply its dependencies, interpreter paths and dynamic libraries safely by simply extending `PATH`.

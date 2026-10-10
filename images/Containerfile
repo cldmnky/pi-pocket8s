@@ -114,6 +114,7 @@ RUN set -eux; \
         libXext \
         libXfixes \
         libXrandr \
+        libsndfile \
         libxcb \
         libxkbcommon \
         make \
@@ -252,6 +253,17 @@ RUN set -eux; \
 # extensions/web-search/README.md.
 COPY --chown=1000:1000 extensions/web-search.ts /opt/pi-pocket/src/server/extensions/web-search.ts
 COPY --chown=1000:1000 extensions/web-search/ /opt/pi-pocket/src/server/extensions/web-search/
+
+# Fail the build if the shipped model fix loses its shape: Pi reads models.json at startup, and a
+# broken file is ignored silently, which would put kimi-k3 back to failing every tool-using request.
+RUN set -eux; \
+    test -f /usr/share/pi-agent/models.json; \
+    node -e ' \
+        const fix = require("/usr/share/pi-agent/models.json"); \
+        const entry = fix.providers?.["opencode-go"]?.modelOverrides?.["kimi-k3"]; \
+        if (entry?.compat?.supportsStrictMode !== false) throw new Error("the kimi-k3 strict-mode override is missing"); \
+        console.log("model fix ok"); \
+    '
 
 # Preconfigured subagent types: shipped as a second Pi Pocket built-in extension, so a fresh
 # workspace can hand work to an architect, a coder, and an independent reviewer without any

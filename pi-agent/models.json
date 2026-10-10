@@ -1,0 +1,13 @@
+{
+  "providers": {
+    "opencode-go": {
+      "modelOverrides": {
+        "kimi-k3": {
+          "compat": {
+            "supportsStrictMode": false
+          }
+        }
+      }
+    }
+  }
+}

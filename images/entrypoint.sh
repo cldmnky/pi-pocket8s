@@ -79,6 +79,63 @@ prepare_directories() {
     fi
 }
 
+# Seed the shipped Pi model fix into the workspace home: opencode-go advertises kimi-k3 as
+# supporting OpenAI strict-mode tools, but the gateway's upstream rejects Pi's tool schemas in
+# strict mode, so every tool-using request to kimi-k3 fails with HTTP 400. Turning the flag off for
+# that model is the difference between an architect subagent that works and one that silently fails.
+# Pi reads models.json once, at startup, so this has to be in place before the app starts.
+#
+# A workspace without the file gets the shipped copy. One that already has a models.json is merged
+# instead: the override is added only where it is missing, other keys are left alone, and a file that
+# does not parse — or a missing jq — is reported and left untouched rather than rewritten blind.
+seed_pi_models() {
+    local src="${PI_AGENT_SOURCE:-/usr/share/pi-agent}/models.json"
+    local dest="${HOME_DIR}/.pi/agent/models.json"
+
+    if [ ! -r "${src}" ]; then
+        warn "shipped models.json missing: ${src}"
+        return
+    fi
+
+    if [ ! -e "${dest}" ]; then
+        mkdir -p "$(dirname "${dest}")" 2>/dev/null || true
+        if cp "${src}" "${dest}" 2>/dev/null; then
+            log "seeded ${dest#$HOME_DIR/} from the image"
+        else
+            warn "cannot seed ${dest}"
+        fi
+        return
+    fi
+
+    if ! command -v jq >/dev/null 2>&1; then
+        warn "no jq to merge the kimi-k3 strict-mode override into ${dest}; kimi-k3 keeps failing with tools"
+        return
+    fi
+
+    if ! jq -e . "${dest}" >/dev/null 2>&1; then
+        warn "${dest} is not valid JSON; leaving it as it is (the kimi-k3 strict-mode override is not applied)"
+        return
+    fi
+
+    if jq -e '.providers["opencode-go"].modelOverrides["kimi-k3"].compat.supportsStrictMode == false' "${dest}" >/dev/null 2>&1; then
+        return
+    fi
+
+    local merged
+    merged="$(jq --slurpfile fix "${src}" '
+        .providers = ((.providers // {})
+            | .["opencode-go"] = ((.["opencode-go"] // {})
+                | .modelOverrides = ((.modelOverrides // {})
+                    | .["kimi-k3"] = ((.["kimi-k3"] // {}) * $fix[0].providers["opencode-go"].modelOverrides["kimi-k3"]))))
+    ' "${dest}" 2>/dev/null)" || {
+        warn "cannot merge the kimi-k3 strict-mode override into ${dest}; leaving it as it is"
+        return
+    }
+
+    printf '%s\n' "${merged}" > "${dest}.tmp" && mv "${dest}.tmp" "${dest}" && \
+        log "added the kimi-k3 strict-mode override to ${dest#$HOME_DIR/}"
+}
+
 # Seed the shipped Pi skill, prompt template, and subagent types into the workspace home.
 # Copy-if-missing: in-pod edits survive restarts, and deleting a file re-seeds
 # the shipped copy on the next start (the update path for existing volumes).
@@ -374,6 +431,7 @@ launch() {
 
 prepare_directories
 seed_pi_agent_files
+seed_pi_models
 if [ -n "${POCKET_FRAME_ANCESTORS:-}" ] && [ -x /usr/local/bin/pi-pocket-embed-patch ]; then
     /usr/local/bin/pi-pocket-embed-patch || warn "continuing without embedded portal support"
 fi

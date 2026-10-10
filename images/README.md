@@ -36,6 +36,7 @@ verified against the vendor's published SHA-256; RPMS are GPG-verified by `dnf`.
 | Go | RHEL `golang` |
 | Python | RHEL `python3`, `python3-pip`, `python3-devel`, `venv` |
 | C/C++ | `gcc`, `gcc-c++`, `make`, `cmake`, `pkgconf`, `patch` |
+| Audio | `libsndfile` (WAV, FLAC, Ogg/Vorbis, Opus, AIFF and the rest, plus the C API) — what Python's `soundfile`, `librosa`, `sox` front ends, and most audio tooling link against. Installed because a workspace that processes audio files should not have to build it first |
 | SCM/SSH | `git`, `openssh`, `openssh-clients`, `known_hosts`/`authorized_keys` from the runtime secret |
 | Containers | `podman`, `buildah`, `skopeo`, with `/etc/containers/storage.conf` defaulting to the `vfs` driver (no `/dev/fuse`, no host devices) |
 | Kubernetes | pinned `kubectl` v1.35.6 (matches the 1.35 cluster; newer clients break skew policy), `oc` 4.22.17, `helm` v4.3.0, each checksum-verified |
