@@ -98,6 +98,42 @@ spec:
               value: {{ printf "https://%s" .Values.ingress.pocketHost | quote }}
             - name: TERMINAL_URL
               value: {{ printf "https://%s" .Values.ingress.terminalHost | quote }}
+            {{- if .Values.adminElevation.enabled }}
+            {{- $operators := list }}
+            {{- range .Values.adminElevation.operators }}{{- $operators = append $operators (toString .) }}{{- end }}
+            # Admin API configuration. The portal authenticates operators and
+            # records session requests; the controller owns the binding and the
+            # admin Deployment. No ADMIN_BOOTSTRAP, reconcile or health value is
+            # exposed here, so the portal can never provision the delegation.
+            - name: ADMIN_NAMESPACE
+              value: {{ .Values.adminElevation.namespace | quote }}
+            - name: ADMIN_DEPLOYMENT
+              value: {{ .Values.adminElevation.deployment | quote }}
+            - name: ADMIN_SERVICE_ACCOUNT
+              value: {{ .Values.adminElevation.serviceAccount | quote }}
+            - name: ADMIN_RUNTIME_SECRET
+              value: {{ .Values.adminElevation.runtimeSecret | quote }}
+            - name: ADMIN_POCKET_URL
+              value: {{ .Values.adminElevation.pocketURL | quote }}
+            - name: ADMIN_TERMINAL_URL
+              value: {{ .Values.adminElevation.terminalURL | quote }}
+            - name: ADMIN_SESSION_SECRET
+              value: {{ include "pocket.adminSessionSecret" . | quote }}
+            - name: ADMIN_CLUSTER_ROLE_BINDING
+              value: {{ include "pocket.adminClusterRoleBinding" . | quote }}
+            - name: ADMIN_CLUSTER_ROLE
+              value: {{ .Values.adminElevation.clusterRole | quote }}
+            - name: ADMIN_OPERATORS
+              value: {{ join "," $operators | quote }}
+            - name: ADMIN_DEFAULT_DURATION_SECONDS
+              value: {{ .Values.adminElevation.defaultDurationSeconds | quote }}
+            - name: ADMIN_MAX_DURATION_SECONDS
+              value: {{ .Values.adminElevation.maxDurationSeconds | quote }}
+            - name: ADMIN_RECENT_LOGIN_SECONDS
+              value: {{ .Values.adminElevation.recentLoginSeconds | quote }}
+            - name: ADMIN_STARTUP_TIMEOUT_SECONDS
+              value: {{ .Values.adminElevation.startupTimeoutSeconds | quote }}
+            {{- end }}
           volumeMounts:
             {{- if include "pocket.githubEnabled" . }}
             - name: github-app

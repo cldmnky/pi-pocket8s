@@ -1,0 +1,223 @@
+{{- if .Values.adminElevation.enabled }}
+{{- $portalNamespace := include "pocket.portalNamespace" . }}
+{{- $controller := printf "%s-admin-controller" (include "pocket.fullname" .) }}
+{{- $sessionSecret := include "pocket.adminSessionSecret" . }}
+{{- $clusterRoleBinding := include "pocket.adminClusterRoleBinding" . }}
+{{- $existingSession := lookup "v1" "Secret" $portalNamespace $sessionSecret }}
+# Durable session record in the portal namespace. Retained across upgrades and
+# uninstall because it holds the only copy of the approved/observed lifecycle
+# state; an offline render must never reset it to a fresh empty record.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $sessionSecret }}
+  namespace: {{ $portalNamespace }}
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+data:
+  {{- if $existingSession }}
+  {{- toYaml $existingSession.data | nindent 2 }}
+  {{- else }}
+  session.json: {{ "{}" | b64enc | quote }}
+  {{- end }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $controller }}
+  namespace: {{ $portalNamespace }}
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+---
+# Cluster-scoped controller authority only: read and patch the one predefined
+# binding, and bind the one predefined ClusterRole. No Pod, Deployment or Secret
+# rule lives here, so the controller gets no cluster-wide read of those.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $controller }}
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterrolebindings]
+    resourceNames: [{{ $clusterRoleBinding | quote }}]
+    verbs: [get, patch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles]
+    resourceNames: [{{ .Values.adminElevation.clusterRole | quote }}]
+    verbs: [bind]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $controller }}
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $controller }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $controller }}
+    namespace: {{ $portalNamespace }}
+---
+# Namespaced pod observation, Deployment lifecycle and runtime-Secret cleanup,
+# scoped to the dedicated admin namespace by this RoleBinding.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $controller }}
+  namespace: {{ .Values.adminElevation.namespace }}
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [{{ .Values.adminElevation.deployment | quote }}]
+    verbs: [get, patch]
+  - apiGroups: [apps]
+    resources: [deployments/scale]
+    resourceNames: [{{ .Values.adminElevation.deployment | quote }}]
+    verbs: [get, update]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [{{ .Values.adminElevation.runtimeSecret | quote }}]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $controller }}
+  namespace: {{ .Values.adminElevation.namespace }}
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $controller }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $controller }}
+    namespace: {{ $portalNamespace }}
+---
+# Session-record access in the portal namespace, named to the one Secret.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $controller }}-session
+  namespace: {{ $portalNamespace }}
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [{{ $sessionSecret | quote }}]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $controller }}-session
+  namespace: {{ $portalNamespace }}
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $controller }}-session
+subjects:
+  - kind: ServiceAccount
+    name: {{ $controller }}
+    namespace: {{ $portalNamespace }}
+---
+# Portal read-only view of the admin Deployment and its runtime Secret, so the
+# management API can report readiness without cluster-wide access.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "pocket.fullname" . }}-portal-admin
+  namespace: {{ .Values.adminElevation.namespace }}
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [{{ .Values.adminElevation.deployment | quote }}]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [{{ .Values.adminElevation.runtimeSecret | quote }}]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "pocket.fullname" . }}-portal-admin
+  namespace: {{ .Values.adminElevation.namespace }}
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "pocket.fullname" . }}-portal-admin
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "pocket.fullname" . }}-portal
+    namespace: {{ $portalNamespace }}
+---
+# Portal writes the approved session record; named to the one Secret.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "pocket.fullname" . }}-portal-admin-session
+  namespace: {{ $portalNamespace }}
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [{{ $sessionSecret | quote }}]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "pocket.fullname" . }}-portal-admin-session
+  namespace: {{ $portalNamespace }}
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "pocket.fullname" . }}-portal-admin-session
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "pocket.fullname" . }}-portal
+    namespace: {{ $portalNamespace }}
+{{- if .Values.adminElevation.bootstrap }}
+---
+# Inert predefined binding: cluster-admin with no subjects. Idle, it grants
+# nothing; the controller adds exactly the configured admin service account for
+# an approved session and clears it on expiry or revocation. Rendered only by the
+# explicit bootstrap installer action.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $clusterRoleBinding }}
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Values.adminElevation.clusterRole }}
+subjects: []
+{{- end }}
+{{- end }}

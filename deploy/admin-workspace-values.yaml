@@ -1,0 +1,44 @@
+# Stopped-by-default admin workspace: the second release of charts/pi-pocket that
+# only the management-side adminElevation controller starts and stops. Install it
+# with this file alone:
+#
+#   helm upgrade --install pi-pocket-admin charts/pi-pocket \
+#     -n pi-pocket-admin -f deploy/admin-workspace-values.yaml
+#
+# Helm always renders replicas 0; the controller scales it to 1 for an approved
+# session and back to 0 on expiry or revocation.
+fullnameOverride: pi-pocket-admin
+
+# admin mode enforces the isolation contract in validate.yaml: replicas 0,
+# ephemeral storage, no namespace role, no portal, its own runtime Secret.
+workspace:
+  mode: admin
+
+replicas: 0
+
+serviceAccount:
+  # The admin workspace gets cluster-admin only through the controller-managed
+  # predefined binding. It never receives a standing namespace role.
+  namespaceRole: ""
+
+persistence:
+  # Fresh home, repos and identity every session; no PVC is rendered or reused.
+  mode: ephemeral
+
+portal:
+  # The admin workspace has no configuration portal of its own; the separate
+  # management release owns the portal and the elevation API.
+  enabled: false
+
+openshift:
+  # Cluster maintenance does not need nested Podman, so keep the hardened
+  # restricted-v3 profile for the elevated workspace.
+  pocketSCC: restricted-v3
+
+ingress:
+  pocketHost: pocket-admin.apps.voyager.blahonga.me
+  terminalHost: pocket-admin-terminal.apps.voyager.blahonga.me
+
+adminElevation:
+  # The privileged controls belong to the management release, never here.
+  enabled: false

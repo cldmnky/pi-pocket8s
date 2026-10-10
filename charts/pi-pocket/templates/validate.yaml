@@ -45,3 +45,47 @@
 {{- if not (has .Values.serviceAccount.namespaceRole (list "admin" "edit" "view" "")) -}}
 {{- fail "serviceAccount.namespaceRole must be admin, edit, view, or empty" -}}
 {{- end -}}
+{{- if not (has .Values.workspace.mode (list "standard" "admin")) -}}
+{{- fail "workspace.mode must be standard or admin" -}}
+{{- end -}}
+{{- if not (has .Values.persistence.mode (list "pvc" "ephemeral")) -}}
+{{- fail "persistence.mode must be pvc or ephemeral" -}}
+{{- end -}}
+{{- if eq .Values.workspace.mode "admin" -}}
+{{- if ne (int .Values.replicas) 0 -}}{{- fail "workspace.mode=admin requires replicas 0: the controller starts the admin workspace, Helm does not" -}}{{- end -}}
+{{- if ne .Values.persistence.mode "ephemeral" -}}{{- fail "workspace.mode=admin requires persistence.mode=ephemeral: every session must start with a fresh home and identity" -}}{{- end -}}
+{{- if .Values.serviceAccount.namespaceRole -}}{{- fail "workspace.mode=admin requires serviceAccount.namespaceRole empty: authority comes only from the controller-managed cluster-admin binding" -}}{{- end -}}
+{{- if .Values.portal.enabled -}}{{- fail "workspace.mode=admin requires portal.enabled=false: the admin workspace is managed by the separate management portal" -}}{{- end -}}
+{{- if .Values.runtimeSecret.existingSecret -}}{{- fail "workspace.mode=admin requires runtimeSecret.existingSecret empty: the admin release owns a fresh runtime Secret" -}}{{- end -}}
+{{- if empty .Values.ingress.pocketHost -}}{{- fail "workspace.mode=admin requires ingress.pocketHost: the admin owner-login link must match a known HTTPS origin" -}}{{- end -}}
+{{- if .Values.adminElevation.enabled -}}{{- fail "workspace.mode=admin cannot enable adminElevation: the privileged controls belong to the standard management release" -}}{{- end -}}
+{{- end -}}
+{{- if eq .Values.persistence.mode "ephemeral" -}}
+{{- if .Values.persistence.existingClaim -}}{{- fail "persistence.mode=ephemeral requires persistence.existingClaim empty: an ephemeral workspace must not mount the retained PVC" -}}{{- end -}}
+{{- end -}}
+{{- if .Values.adminElevation.bootstrap -}}
+{{- if not .Values.adminElevation.enabled -}}{{- fail "adminElevation.bootstrap requires adminElevation.enabled" -}}{{- end -}}
+{{- end -}}
+{{- if .Values.adminElevation.enabled -}}
+{{- if ne .Values.workspace.mode "standard" -}}{{- fail "adminElevation.enabled requires workspace.mode=standard" -}}{{- end -}}
+{{- if ne .Values.portal.authMode "github" -}}{{- fail "adminElevation.enabled requires portal.authMode=github: elevation is refused in token-auth mode" -}}{{- end -}}
+{{- if not .Values.adminElevation.bootstrap -}}{{- fail "adminElevation.enabled requires adminElevation.bootstrap=true: the privileged controller RBAC and the inert binding are an explicit installer action" -}}{{- end -}}
+{{- range $key := list "namespace" "deployment" "serviceAccount" "runtimeSecret" "pocketURL" -}}
+{{- if empty (index $.Values.adminElevation $key) -}}{{- fail (printf "adminElevation.%s is required when elevation is enabled" $key) -}}{{- end -}}
+{{- end -}}
+{{- $portalNamespace := include "pocket.portalNamespace" . -}}
+{{- if eq .Values.adminElevation.namespace .Release.Namespace -}}{{- fail "adminElevation.namespace must differ from the release namespace" -}}{{- end -}}
+{{- if eq .Values.adminElevation.namespace $portalNamespace -}}{{- fail "adminElevation.namespace must differ from the portal namespace" -}}{{- end -}}
+{{- if eq $portalNamespace .Release.Namespace -}}{{- fail "adminElevation.enabled requires the portal in a separate management namespace" -}}{{- end -}}
+{{- if not (kindIs "slice" .Values.adminElevation.operators) -}}{{- fail "adminElevation.operators must be a list of numeric GitHub user ids" -}}{{- end -}}
+{{- if not .Values.adminElevation.operators -}}{{- fail "adminElevation.operators must list at least one numeric GitHub user id: an empty allowlist denies every activation" -}}{{- end -}}
+{{- range $operator := .Values.adminElevation.operators -}}
+{{- if not (regexMatch "^[1-9][0-9]*$" (toString $operator)) -}}{{- fail (printf "adminElevation.operators must contain positive numeric GitHub user ids, got %v" $operator) -}}{{- end -}}
+{{- end -}}
+{{- if le (int .Values.adminElevation.defaultDurationSeconds) 0 -}}{{- fail "adminElevation.defaultDurationSeconds must be positive" -}}{{- end -}}
+{{- if gt (int .Values.adminElevation.defaultDurationSeconds) (int .Values.adminElevation.maxDurationSeconds) -}}{{- fail "adminElevation.defaultDurationSeconds must not exceed maxDurationSeconds" -}}{{- end -}}
+{{- if gt (int .Values.adminElevation.maxDurationSeconds) 3600 -}}{{- fail "adminElevation.maxDurationSeconds must not exceed 3600" -}}{{- end -}}
+{{- if le (int .Values.adminElevation.recentLoginSeconds) 0 -}}{{- fail "adminElevation.recentLoginSeconds must be positive" -}}{{- end -}}
+{{- if le (int .Values.adminElevation.startupTimeoutSeconds) 0 -}}{{- fail "adminElevation.startupTimeoutSeconds must be positive" -}}{{- end -}}
+{{- if le (int .Values.adminElevation.reconcileSeconds) 0 -}}{{- fail "adminElevation.reconcileSeconds must be positive" -}}{{- end -}}
+{{- end -}}

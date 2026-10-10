@@ -1,5 +1,11 @@
 nameOverride: ""
 fullnameOverride: ""
+# standard: the normal persistent namespace-admin workspace.
+# admin: the isolated, stopped-by-default workspace that adminElevation starts
+# and stops. It refuses to render unless replicas is 0, storage is ephemeral, it
+# has no namespace role, no portal and no elevation controls of its own.
+workspace:
+  mode: standard # standard | admin
 image:
   repository: quay.io/cldmnky/pi-pocket
   tag: latest
@@ -21,6 +27,10 @@ serviceAccount:
   # WARNING: steering the agent grants this namespace-level Kubernetes authority.
   namespaceRole: admin
 persistence:
+  # pvc keeps the workspace (home, repos, SQLite, logins) across restarts.
+  # ephemeral mounts emptyDir per session, so every admin session starts with a
+  # fresh home and identity and nothing survives a Pod replacement.
+  mode: pvc # pvc | ephemeral
   existingClaim: ""
   size: 40Gi
   storageClass: ""
@@ -82,3 +92,49 @@ networkPolicy:
       network.openshift.io/policy-group: ingress
 nodeSelector: {}
 tolerations: []
+# Management-side cluster-admin elevation. Enabling it is a deliberate security
+# decision: the portal exposes a named admin API and the lifecycle controller can
+# bind cluster-admin to the separate admin workspace service account. Off by
+# default, so existing installations render exactly as before.
+adminElevation:
+  # Requires workspace.mode=standard and portal.authMode=github; renders the
+  # portal admin env vars and the lifecycle controller. The normal workspace
+  # never receives these credentials.
+  enabled: false
+  # Explicit installer action: render the privileged controller RBAC and the
+  # inert (subject-less) predefined cluster-admin binding. Never defaulted on.
+  # The admin workspace cannot start a session while this is false.
+  bootstrap: false
+  # Target admin workspace, named by the separate stopped release. Each value
+  # must differ from this release's namespace and from the portal namespace; the
+  # controller treats them as fixed configuration, never request input.
+  namespace: ""
+  deployment: ""
+  serviceAccount: ""
+  # Admin runtime Secret: the controller clears owner-login metadata here and
+  # the portal reads the freshness metadata through a named role in the admin
+  # namespace.
+  runtimeSecret: ""
+  pocketURL: "" # https origin of the admin workspace (no trailing slash)
+  terminalURL: "" # optional https origin of the admin terminal
+  # Durable session-state Secret in the portal namespace. Defaults to
+  # <fullname>-admin-session; retained across upgrades and uninstall.
+  sessionSecret: ""
+  # Exact ClusterRole the controller may bind and the roleRef of the inert
+  # predefined binding. Changing it changes what a session grants.
+  clusterRole: cluster-admin
+  # Predefined inert binding the controller patches. Defaults to
+  # <fullname>-admin-cluster-admin. A name collision with an unrelated object
+  # must fail the session, never be adopted.
+  clusterRoleBinding: ""
+  # Numeric GitHub user IDs allowed to activate. Empty denies every activation.
+  operators: []
+  # Bounded session lifetime in seconds; default < max, both <= 3600.
+  defaultDurationSeconds: 900
+  maxDurationSeconds: 1800
+  # Activation requires a portal login no older than this many seconds.
+  recentLoginSeconds: 900
+  # Upper bound on waiting for the admin workspace to become ready.
+  startupTimeoutSeconds: 180
+  # Controller reconciliation interval.
+  reconcileSeconds: 5

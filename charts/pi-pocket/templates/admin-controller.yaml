@@ -1,0 +1,114 @@
+{{- if .Values.adminElevation.enabled }}
+{{- $operators := list }}
+{{- range .Values.adminElevation.operators }}{{- $operators = append $operators (toString .) }}{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pocket.fullname" . }}-admin-controller
+  namespace: {{ include "pocket.portalNamespace" . }}
+  labels:
+    {{- include "pocket.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # One reconciler only. Recreate avoids two controllers observing the same
+  # session state and racing on the predefined cluster-admin binding.
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: admin-controller
+  template:
+    metadata:
+      labels:
+        {{- include "pocket.labels" . | nindent 8 }}
+        app.kubernetes.io/component: admin-controller
+      {{- if .Values.openshift.enabled }}
+      annotations:
+        openshift.io/required-scc: restricted-v3
+      {{- end }}
+    spec:
+      hostUsers: false
+      serviceAccountName: {{ include "pocket.fullname" . }}-admin-controller
+      automountServiceAccountToken: true
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: admin-controller
+          image: "{{ .Values.portal.image.repository }}:{{ .Values.portal.image.tag }}"
+          imagePullPolicy: {{ .Values.portal.image.pullPolicy }}
+          command: [/usr/local/bin/admin-controller]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true
+          ports:
+            - name: health
+              containerPort: 8090
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef: {fieldPath: metadata.namespace}
+            - name: ADMIN_NAMESPACE
+              value: {{ .Values.adminElevation.namespace | quote }}
+            - name: ADMIN_DEPLOYMENT
+              value: {{ .Values.adminElevation.deployment | quote }}
+            - name: ADMIN_SERVICE_ACCOUNT
+              value: {{ .Values.adminElevation.serviceAccount | quote }}
+            - name: ADMIN_RUNTIME_SECRET
+              value: {{ .Values.adminElevation.runtimeSecret | quote }}
+            - name: ADMIN_POCKET_URL
+              value: {{ .Values.adminElevation.pocketURL | quote }}
+            - name: ADMIN_TERMINAL_URL
+              value: {{ .Values.adminElevation.terminalURL | quote }}
+            - name: ADMIN_SESSION_SECRET
+              value: {{ include "pocket.adminSessionSecret" . | quote }}
+            - name: ADMIN_CLUSTER_ROLE_BINDING
+              value: {{ include "pocket.adminClusterRoleBinding" . | quote }}
+            - name: ADMIN_CLUSTER_ROLE
+              value: {{ .Values.adminElevation.clusterRole | quote }}
+            - name: ADMIN_BOOTSTRAP
+              value: {{ .Values.adminElevation.bootstrap | quote }}
+            - name: ADMIN_OPERATORS
+              value: {{ join "," $operators | quote }}
+            - name: ADMIN_DEFAULT_DURATION_SECONDS
+              value: {{ .Values.adminElevation.defaultDurationSeconds | quote }}
+            - name: ADMIN_MAX_DURATION_SECONDS
+              value: {{ .Values.adminElevation.maxDurationSeconds | quote }}
+            - name: ADMIN_RECENT_LOGIN_SECONDS
+              value: {{ .Values.adminElevation.recentLoginSeconds | quote }}
+            - name: ADMIN_STARTUP_TIMEOUT_SECONDS
+              value: {{ .Values.adminElevation.startupTimeoutSeconds | quote }}
+            - name: ADMIN_RECONCILE_SECONDS
+              value: {{ .Values.adminElevation.reconcileSeconds | quote }}
+            - name: ADMIN_HEALTH_ADDR
+              value: ":8090"
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet: {path: /healthz, port: health}
+          livenessProbe:
+            httpGet: {path: /healthz, port: health}
+          resources:
+            {{- toYaml .Values.portal.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
