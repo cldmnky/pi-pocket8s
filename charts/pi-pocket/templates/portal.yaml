@@ -105,6 +105,8 @@ spec:
             # records session requests; the controller owns the binding and the
             # admin Deployment. No ADMIN_BOOTSTRAP, reconcile or health value is
             # exposed here, so the portal can never provision the delegation.
+            - name: ADMIN_ELEVATION_ENABLED
+              value: "true"
             - name: ADMIN_NAMESPACE
               value: {{ .Values.adminElevation.namespace | quote }}
             - name: ADMIN_DEPLOYMENT

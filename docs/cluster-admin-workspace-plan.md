@@ -1,6 +1,9 @@
 # Plan: on-demand cluster-admin workspace with portal controls
 
-**Status: proposed; not implemented.**
+**Status: implemented — first complete release (portal-controlled activation,
+automatic expiry, revocation, status, and restricted workspace access). The
+agent request extension in section 15 is deliberately deferred. Operations:
+see [cluster-admin-runbook.md](cluster-admin-runbook.md).**
 
 Build a second, isolated pi-pocket workspace, controlled through the portal,
 with time-limited cluster-admin sessions. The normal workspace keeps its

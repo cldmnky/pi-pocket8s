@@ -57,6 +57,8 @@ spec:
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef: {fieldPath: metadata.namespace}
+            - name: ADMIN_ELEVATION_ENABLED
+              value: "true"
             - name: ADMIN_NAMESPACE
               value: {{ .Values.adminElevation.namespace | quote }}
             - name: ADMIN_DEPLOYMENT

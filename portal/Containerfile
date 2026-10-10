@@ -11,7 +11,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} \
-    go build -trimpath -ldflags="-s -w" -o /tmp/out/portal .
+    go build -trimpath -ldflags="-s -w" -o /tmp/out/portal . \
+    && CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} \
+       go build -trimpath -ldflags="-s -w" -o /tmp/out/admin-controller ./cmd/admin-controller
 
 # Runtime stage: latest UBI 10 minimal running as non-root UID 1000.
 # No credentials, package installs, or writable state are required.
@@ -20,6 +22,9 @@ LABEL org.opencontainers.image.title="pi-pocket portal" \
       org.opencontainers.image.description="Runtime configuration and lifecycle portal for pi-pocket" \
       org.opencontainers.image.source="https://github.com/cldmnky/pi-pocket8s"
 COPY --from=build /tmp/out/portal /usr/local/bin/portal
+# The cluster-admin lifecycle reconciler shares this image and runs with its own
+# service account; it exposes only a health endpoint.
+COPY --from=build /tmp/out/admin-controller /usr/local/bin/admin-controller
 USER 1000:1000
 EXPOSE 8080
 STOPSIGNAL SIGTERM
