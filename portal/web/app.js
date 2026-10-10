@@ -18,6 +18,10 @@
     webSearchModel: '',
     ownerLoginUrl: '',
     repositoryPolicy: null,
+    adminStatus: null,
+    adminEnabled: false,
+    adminAccessUrl: '',
+    adminTimer: null,
     busy: false
   };
 
@@ -33,7 +37,15 @@
     'status-state', 'status-ready', 'status-restarted',
     'action-start', 'action-stop', 'action-restart', 'action-refresh',
     'api-key-rows', 'authorized-keys', 'known-hosts', 'web-search-provider', 'web-search-model',
-    'save-config', 'reload-config', 'pocket-link'
+    'save-config', 'reload-config', 'pocket-link',
+    'tab-admin', 'panel-admin',
+    'admin-idle', 'admin-active', 'admin-failure',
+    'admin-target', 'admin-reason', 'admin-duration', 'admin-confirmation', 'admin-activate',
+    'admin-owner', 'admin-reason-display', 'admin-approved', 'admin-expires', 'admin-countdown',
+    'admin-grant', 'admin-workspace-ready', 'admin-freshness', 'admin-stale-warning', 'admin-expired-warning',
+    'admin-open-workspace', 'admin-open-terminal', 'admin-access-button', 'admin-revoke',
+    'admin-access', 'admin-access-url', 'admin-access-copy', 'admin-access-open',
+    'admin-failure-heading', 'admin-failure-detail', 'admin-failure-code'
   ];
 
   function byId(id) {
@@ -67,6 +79,18 @@
     elements['save-config'].disabled = busy || !hasConfig;
     elements['reload-config'].disabled = busy || !hasConfig;
     elements['unlock-button'].disabled = busy || state.token !== '';
+    var admin = state.adminStatus;
+    if (admin !== null && admin.enabled === true) {
+      var reason = elements['admin-reason'].value.trim();
+      var confirmation = elements['admin-confirmation'].value;
+      elements['admin-activate'].disabled = busy || admin.canActivate !== true || reason === '' || confirmation !== 'cluster-admin';
+      elements['admin-revoke'].disabled = busy;
+      elements['admin-open-workspace'].disabled = busy;
+      elements['admin-open-terminal'].disabled = busy;
+      elements['admin-access-button'].disabled = busy;
+      elements['admin-access-copy'].disabled = busy;
+      elements['admin-access-open'].disabled = busy;
+    }
     elements.app.setAttribute('aria-busy', busy ? 'true' : 'false');
   }
 
@@ -114,6 +138,15 @@
     state.config = null;
     state.running = null;
     state.ownerLoginUrl = '';
+    stopAdminTimer();
+    clearAdminAccess();
+    state.adminStatus = null;
+    state.adminEnabled = false;
+    elements['tab-admin'].hidden = true;
+    elements['panel-admin'].hidden = true;
+    elements['panel-admin'].setAttribute('aria-hidden', 'true');
+    elements['admin-reason'].value = '';
+    elements['admin-confirmation'].value = '';
     elements['owner-link'].removeAttribute('href');
     var qr = elements['owner-qr'];
     qr.getContext('2d').clearRect(0, 0, qr.width, qr.height);
@@ -128,12 +161,17 @@
 
   function selectTab(name) {
     var workspace = name === 'workspace';
+    var configure = name === 'configure';
+    var admin = name === 'admin';
     elements['tab-workspace'].setAttribute('aria-selected', workspace ? 'true' : 'false');
-    elements['tab-configure'].setAttribute('aria-selected', workspace ? 'false' : 'true');
+    elements['tab-configure'].setAttribute('aria-selected', configure ? 'true' : 'false');
+    elements['tab-admin'].setAttribute('aria-selected', admin ? 'true' : 'false');
     elements['panel-workspace'].hidden = !workspace;
     elements['panel-workspace'].setAttribute('aria-hidden', workspace ? 'false' : 'true');
-    elements['panel-configure'].hidden = workspace;
-    elements['panel-configure'].setAttribute('aria-hidden', workspace ? 'true' : 'false');
+    elements['panel-configure'].hidden = !configure;
+    elements['panel-configure'].setAttribute('aria-hidden', configure ? 'false' : 'true');
+    elements['panel-admin'].hidden = !admin;
+    elements['panel-admin'].setAttribute('aria-hidden', admin ? 'false' : 'true');
   }
 
   // Draw the owner sign-in link as a QR code. qrcodegen is a vendored,
@@ -243,6 +281,7 @@
     try {
       await refreshConfig();
       await refreshStatus();
+      await loadAdmin();
       elements.token.value = '';
       elements.unlock.hidden = true;
       elements.app.hidden = false;
@@ -608,6 +647,368 @@
     finally { elements['github-load-repositories'].disabled = false; }
   }
 
+  // --- Cluster administration panel ----------------------------------------
+  //
+  // Feature-gated on GET /api/admin/status (enabled:true) and fetched only
+  // after the normal session is authenticated. Every admin refresh and render
+  // is isolated in its own try/catch so an admin failure can never break the
+  // normal workspace panel. The admin access link is a cluster-admin
+  // credential and is held in memory only; it is never persisted.
+
+  var ADMIN_PHASES = [
+    'Idle', 'ActivationRequested', 'Activating', 'Active',
+    'RevocationRequested', 'Expired', 'Revoking', 'CleanupRequired'
+  ];
+  var ADMIN_ACTIVE_PHASES = [
+    'ActivationRequested', 'Activating', 'Active', 'RevocationRequested', 'Expired', 'Revoking'
+  ];
+
+  function stopAdminTimer() {
+    if (state.adminTimer !== null) {
+      clearInterval(state.adminTimer);
+      state.adminTimer = null;
+    }
+  }
+
+  function secondsRemaining(session) {
+    if (session && typeof session.expiresAt === 'string') {
+      var expires = Date.parse(session.expiresAt);
+      if (!isNaN(expires)) {
+        return Math.max(0, Math.floor((expires - Date.now()) / 1000));
+      }
+    }
+    if (session && typeof session.secondsRemaining === 'number' && isFinite(session.secondsRemaining)) {
+      return Math.max(0, Math.floor(session.secondsRemaining));
+    }
+    return 0;
+  }
+
+  function formatCountdown(totalSeconds) {
+    var seconds = Math.max(0, Math.floor(totalSeconds));
+    var minutes = Math.floor(seconds / 60);
+    var rest = seconds % 60;
+    return (minutes < 10 ? '0' : '') + minutes + ':' + (rest < 10 ? '0' : '') + rest;
+  }
+
+  function renderFreshness(status) {
+    var observed = typeof status.observedAt === 'string' ? Date.parse(status.observedAt) : NaN;
+    if (!isNaN(observed)) {
+      var ago = Math.max(0, Math.round((Date.now() - observed) / 1000));
+      elements['admin-freshness'].textContent = 'observed ' + ago + 's ago';
+    } else {
+      elements['admin-freshness'].textContent = 'observation time unknown';
+    }
+    elements['admin-stale-warning'].hidden = status.fresh === true;
+  }
+
+  function tickAdmin() {
+    var status = state.adminStatus;
+    if (status === null || status.enabled !== true) {
+      stopAdminTimer();
+      return;
+    }
+    var session = (status.session && typeof status.session === 'object') ? status.session : null;
+    if (session !== null) {
+      var remaining = secondsRemaining(session);
+      elements['admin-countdown'].textContent = formatCountdown(remaining);
+      elements['admin-expired-warning'].hidden = remaining > 0;
+    }
+    renderFreshness(status);
+  }
+
+  function startAdminTimer() {
+    stopAdminTimer();
+    tickAdmin();
+    state.adminTimer = setInterval(function () {
+      try {
+        tickAdmin();
+      } catch (err) {
+        stopAdminTimer();
+      }
+    }, 1000);
+  }
+
+  function clearAdminAccess() {
+    state.adminAccessUrl = '';
+    elements['admin-access-url'].value = '';
+    elements['admin-access'].hidden = true;
+  }
+
+  function showAdminView(name) {
+    elements['admin-idle'].hidden = name !== 'idle';
+    elements['admin-active'].hidden = name !== 'active';
+    elements['admin-failure'].hidden = name !== 'failure';
+  }
+
+  // Duration options are fixed at 5/10/15/30 minutes, filtered by the
+  // controller's maxDurationSeconds and defaulted from defaultDurationSeconds.
+  function populateDurations(status) {
+    var select = elements['admin-duration'];
+    var max = typeof status.maxDurationSeconds === 'number' ? status.maxDurationSeconds : 0;
+    var def = typeof status.defaultDurationSeconds === 'number' ? status.defaultDurationSeconds : 900;
+    var available = [300, 600, 900, 1800].filter(function (seconds) {
+      return max <= 0 || seconds <= max;
+    });
+    if (available.length === 0) {
+      available = [Math.max(1, max > 0 ? max : def)];
+    }
+    select.replaceChildren();
+    available.forEach(function (seconds) {
+      var option = document.createElement('option');
+      option.value = String(seconds);
+      option.textContent = (seconds / 60) + ' minutes';
+      select.appendChild(option);
+    });
+    var selected = available.indexOf(def);
+    select.value = String(available[selected >= 0 ? selected : 0]);
+  }
+
+  function renderAdminIdle(status) {
+    showAdminView('idle');
+    stopAdminTimer();
+    elements['admin-target'].textContent =
+      (typeof status.namespace === 'string' && status.namespace !== '' ? status.namespace : '?') +
+      ' / ' +
+      (typeof status.deployment === 'string' && status.deployment !== '' ? status.deployment : '?');
+    populateDurations(status);
+  }
+
+  function renderAdminActive(status) {
+    showAdminView('active');
+    var session = (status.session && typeof status.session === 'object') ? status.session : null;
+    elements['admin-owner'].textContent = (session && typeof session.owner === 'string' && session.owner !== '') ? session.owner : '(pending)';
+    elements['admin-reason-display'].textContent = (session && typeof session.reason === 'string' && session.reason !== '') ? session.reason : '(pending)';
+    elements['admin-approved'].textContent = (session && typeof session.approvedAt === 'string' && session.approvedAt !== '') ? session.approvedAt : '-';
+    elements['admin-expires'].textContent = (session && typeof session.expiresAt === 'string' && session.expiresAt !== '') ? session.expiresAt : '-';
+    elements['admin-grant'].textContent = (status.grant && status.grant.observed === true) ? 'Grant observed' : 'Grant not observed';
+    elements['admin-workspace-ready'].textContent = (status.workspace && status.workspace.ready === true) ? 'Ready' : 'Not ready';
+    elements['admin-open-workspace'].hidden = status.canOpen !== true;
+    elements['admin-open-terminal'].hidden = !(typeof status.terminalUrl === 'string' && status.terminalUrl !== '');
+    elements['admin-access-button'].hidden = status.canOpen !== true;
+    elements['admin-revoke'].hidden = status.canRevoke !== true;
+    renderFreshness(status);
+    if (status.fresh !== true) {
+      clearAdminAccess();
+    }
+    startAdminTimer();
+  }
+
+  function failureText(status) {
+    var phase = typeof status.phase === 'string' ? status.phase : '';
+    if (phase === 'CleanupRequired') {
+      return { heading: 'Cleanup incomplete', detail: 'Cluster-admin cleanup did not finish. Access state is uncertain until the controller completes removal.' };
+    }
+    if (ADMIN_PHASES.indexOf(phase) === -1) {
+      return { heading: 'Access state unknown', detail: 'The portal cannot confirm the cluster-admin state. Treat access as uncertain.' };
+    }
+    if (status.fresh !== true) {
+      return { heading: 'Controller unavailable', detail: 'The controller observation is stale. Access state is uncertain.' };
+    }
+    return { heading: 'Activation failed', detail: 'The activation did not complete. Access state is uncertain; revoke or retry once the controller recovers.' };
+  }
+
+  function renderAdminFailure(status) {
+    showAdminView('failure');
+    stopAdminTimer();
+    clearAdminAccess();
+    var text = failureText(status);
+    elements['admin-failure-heading'].textContent = text.heading;
+    elements['admin-failure-detail'].textContent = text.detail;
+    var code = typeof status.failureCode === 'string' ? status.failureCode : '';
+    elements['admin-failure-code'].hidden = code === '';
+    elements['admin-failure-code'].textContent = code === '' ? '' : 'failure code: ' + code;
+  }
+
+  function renderAdmin(status) {
+    state.adminStatus = status;
+    var enabled = status !== null && status.enabled === true;
+    state.adminEnabled = enabled;
+    elements['tab-admin'].hidden = !enabled;
+    if (!enabled) {
+      stopAdminTimer();
+      clearAdminAccess();
+      elements['panel-admin'].hidden = true;
+      elements['panel-admin'].setAttribute('aria-hidden', 'true');
+      if (elements['tab-admin'].getAttribute('aria-selected') === 'true') {
+        selectTab('workspace');
+      }
+      updateControls();
+      return;
+    }
+    var phase = typeof status.phase === 'string' ? status.phase : '';
+    var hasSession = status.session !== null && typeof status.session === 'object';
+    if (phase === 'CleanupRequired' || ADMIN_PHASES.indexOf(phase) === -1) {
+      renderAdminFailure(status);
+    } else if (hasSession || ADMIN_ACTIVE_PHASES.indexOf(phase) !== -1) {
+      renderAdminActive(status);
+    } else {
+      renderAdminIdle(status);
+    }
+    updateControls();
+  }
+
+  // A refresh error is isolated: it degrades only the admin panel.
+  function renderAdminUnavailable() {
+    if (!state.adminEnabled) {
+      return;
+    }
+    showAdminView('failure');
+    stopAdminTimer();
+    clearAdminAccess();
+    elements['admin-failure-heading'].textContent = 'Controller unavailable';
+    elements['admin-failure-detail'].textContent = 'The admin status could not be read. Access state is uncertain.';
+    elements['admin-failure-code'].hidden = true;
+    elements['admin-failure-code'].textContent = '';
+    updateControls();
+  }
+
+  async function loadAdmin() {
+    var status;
+    try {
+      status = await api('GET', '/api/admin/status');
+    } catch (err) {
+      renderAdminUnavailable();
+      return;
+    }
+    try {
+      renderAdmin(status);
+    } catch (err) {
+      renderAdminUnavailable();
+    }
+  }
+
+  async function activateAdmin() {
+    if (state.busy) {
+      return;
+    }
+    var status = state.adminStatus;
+    if (status === null || status.enabled !== true) {
+      return;
+    }
+    var reason = elements['admin-reason'].value.trim();
+    var confirmation = elements['admin-confirmation'].value;
+    if (reason === '') {
+      setMessage('Enter a reason for cluster-admin access.', 'error');
+      return;
+    }
+    if (confirmation !== 'cluster-admin') {
+      setMessage('Type exactly "cluster-admin" to confirm.', 'error');
+      return;
+    }
+    var durationSeconds = parseInt(elements['admin-duration'].value, 10);
+    if (!isFinite(durationSeconds) || durationSeconds <= 0) {
+      setMessage('Choose a valid duration.', 'error');
+      return;
+    }
+    if (!window.confirm('Grant cluster-admin to the admin workspace for ' + (durationSeconds / 60) + ' minutes?')) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await api('POST', '/api/admin/activate', {
+        resourceVersion: status.resourceVersion,
+        reason: reason,
+        durationSeconds: durationSeconds,
+        confirmation: confirmation
+      });
+      elements['admin-reason'].value = '';
+      elements['admin-confirmation'].value = '';
+      setMessage('Cluster-admin activation requested.', 'ok');
+      await loadAdmin();
+    } catch (err) {
+      setMessage(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revokeAdmin() {
+    if (state.busy) {
+      return;
+    }
+    var status = state.adminStatus;
+    if (status === null || status.enabled !== true) {
+      return;
+    }
+    if (!window.confirm('Revoke cluster-admin access now?')) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await api('POST', '/api/admin/revoke', { resourceVersion: status.resourceVersion });
+      clearAdminAccess();
+      setMessage('Revocation requested.', 'ok');
+      await loadAdmin();
+    } catch (err) {
+      setMessage(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function requestAdminAccess() {
+    if (state.busy) {
+      return;
+    }
+    setBusy(true);
+    try {
+      var result = await api('POST', '/api/admin/access', {});
+      if (result && typeof result.url === 'string' && result.url !== '') {
+        state.adminAccessUrl = result.url;
+        elements['admin-access-url'].value = result.url;
+        elements['admin-access'].hidden = false;
+        setMessage('Admin access link ready. It is a cluster-admin credential: keep it private.', 'ok');
+      } else {
+        clearAdminAccess();
+        setMessage('No admin access link was returned.', 'error');
+      }
+    } catch (err) {
+      setMessage(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyAdminAccess() {
+    if (state.adminAccessUrl === '') {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(state.adminAccessUrl);
+      setMessage('Admin access link copied. It is a cluster-admin credential: keep it private.', 'ok');
+    } catch (err) {
+      setMessage('Copy failed; use "Open link" instead.', 'error');
+    }
+  }
+
+  function openAdminAccess() {
+    if (state.adminAccessUrl === '') {
+      setMessage('No admin access link yet.', 'error');
+      return;
+    }
+    window.open(state.adminAccessUrl, '_blank', 'noopener');
+  }
+
+  function openAdminWorkspace() {
+    var status = state.adminStatus;
+    var url = (status !== null && typeof status.pocketUrl === 'string') ? status.pocketUrl : '';
+    if (url === '') {
+      setMessage('The admin workspace URL is not available.', 'error');
+      return;
+    }
+    window.open(url, '_blank', 'noopener');
+  }
+
+  function openAdminTerminal() {
+    var status = state.adminStatus;
+    var url = (status !== null && typeof status.terminalUrl === 'string') ? status.terminalUrl : '';
+    if (url === '') {
+      setMessage('The admin terminal URL is not available.', 'error');
+      return;
+    }
+    window.open(url, '_blank', 'noopener');
+  }
+
   async function initAuth() {
     elements['token-form'].hidden = true;
     try {
@@ -622,6 +1023,7 @@
         try {
           await refreshConfig();
           await refreshStatus();
+          await loadAdmin();
           var integration = await api('GET', '/api/github/status');
           renderRepositoryPolicy(integration);
           elements['github-user'].textContent = session.login;
@@ -687,6 +1089,19 @@
     });
     elements['save-config'].addEventListener('click', saveConfig);
     elements['reload-config'].addEventListener('click', reloadConfig);
+    elements['tab-admin'].addEventListener('click', function () {
+      selectTab('admin');
+      loadAdmin();
+    });
+    elements['admin-reason'].addEventListener('input', updateControls);
+    elements['admin-confirmation'].addEventListener('input', updateControls);
+    elements['admin-activate'].addEventListener('click', activateAdmin);
+    elements['admin-revoke'].addEventListener('click', revokeAdmin);
+    elements['admin-access-button'].addEventListener('click', requestAdminAccess);
+    elements['admin-access-copy'].addEventListener('click', copyAdminAccess);
+    elements['admin-access-open'].addEventListener('click', openAdminAccess);
+    elements['admin-open-workspace'].addEventListener('click', openAdminWorkspace);
+    elements['admin-open-terminal'].addEventListener('click', openAdminTerminal);
     updateControls();
     initAuth();
   }

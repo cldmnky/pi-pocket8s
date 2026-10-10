@@ -149,7 +149,8 @@ label {
 
 input[type="password"],
 input[type="text"],
-textarea {
+textarea,
+select {
   width: 100%;
   padding: 0.5rem;
   border: 2px solid var(--line-strong);
@@ -157,6 +158,10 @@ textarea {
   font: inherit;
   color: var(--bright);
   background: var(--bg);
+}
+
+input[readonly] {
+  color: var(--dim);
 }
 
 textarea {
@@ -350,6 +355,14 @@ tbody th {
 
 .message.ok {
   color: var(--ok);
+}
+
+.admin-warning {
+  border: 2px solid var(--warn);
+  color: var(--warn);
+  padding: 0.5rem 0.75rem;
+  margin: 0.75rem 0;
+  font-weight: 600;
 }
 
 .hint {
