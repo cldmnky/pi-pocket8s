@@ -348,10 +348,13 @@ at any model the install is signed in to.
 
 Two things about subagents are worth knowing, because both looked like "the subagent never answered":
 
-- **A subagent whose run fails reports that.** It used to wait for good, so the parent heard nothing
-  and *Running now* kept saying it waited for an answer that could not come — which is what the
-  pinned upstream (0.12.2) fixes. If a subagent seems silent, ask for `status`, or open its
-  conversation: a failed run is in its transcript with the provider's error.
+- **A subagent whose run fails may report nothing at all.** Sometimes the failure does come back as
+  `[subagent <name> failed: …]`; sometimes the parent hears nothing and *Running now* keeps saying a
+  reporter waits for an answer that cannot come. Both were observed on one instance, from one batch of
+  spawns, on the older code — the unreliability is what the pinned upstream (0.12.2) reworks: the
+  message is withdrawn and the failure reported through a courier, instead of a submission that can
+  wait for good. If a subagent seems silent, ask for `status` or open its conversation: a failed run
+  is in its transcript with the provider's error.
 - **`kimi-k3` needed a fix to work with tools at all.** The `opencode-go` catalog advertises it as
   supporting OpenAI strict-mode tools, but the gateway's upstream rejects Pi's tool schemas in strict
   mode, so every tool-using request to it failed with HTTP 400 — an architect subagent that could
