@@ -270,7 +270,7 @@ normally.
 
 `.github/workflows/images.yml` builds both images for `linux/amd64` and `linux/arm64`:
 
-- **pull requests**: build only, no push; the amd64 pi-pocket image is loaded and smoke
+- **pull requests**: build only, no push; the amd64 pi-pocket image is smoke
   tested (server answers on `:8787`, workspace prepared, `node:sqlite`/`jiti` load,
   `rg`/`kubectl`/`helm`/`oc` run, the owner token never appears in the log, and `vfs`
   storage plus the nested-container helpers are in place).
@@ -279,6 +279,29 @@ normally.
   manifest list tagged `sha-<commit>` (immutable); `latest` is added on `main`
   only. Scheduled runs pick up a newer UBI 10 base and RHEL packages.
 - Registry credentials: repository secrets `QUAY_USERNAME` and `QUAY_TOKEN`.
+
+The build runs on **podman**, the tool the Makefile and README use, and pulls only
+from `registry.access.redhat.com` and `quay.io`. Docker Hub is deliberately absent:
+its anonymous pull limits returned `429`/`504` for `docker.io/library/golang` and
+failed whole runs, and every image here has a Red Hat or quay source. The Go build
+stages therefore come from `registry.access.redhat.com/ubi10/go-toolset:<stream>`
+(the RHEL 10.2 stream today, the same Go the runtime image installs with
+`dnf install golang`), not from Docker Hub's `golang`.
+
+Three consequences worth knowing:
+
+- The per-architecture jobs push `sha-<commit>-<arch>` tags; the merge job builds the
+  index with `podman manifest create` and pushes it with `--all=false`, so the index
+  is written without re-uploading the layers it points at (the default, `--all`, copies
+  every blob again). It then verifies with `skopeo` that the published index really
+  references both built images.
+- Each architecture builds on its **own native runner** — `ubuntu-24.04` for amd64 and
+  GitHub's `ubuntu-24.04-arm` for arm64 (free for public repositories). No QEMU, no
+  `binfmt_misc` registration, and no emulated `RUN` steps; the arm64 build is as fast
+  as the amd64 one.
+- There is no shared build cache: buildx's `type=gha` cache has no podman
+  equivalent, and a registry cache would mean pushing cache images from pull
+  requests. Each build starts from the base image.
 
 ## Local smoke test
 

@@ -34,7 +34,11 @@ RUN set -eux; \
     rm -rf /src/pi-pocket/.git
 
 # ── terminal daemon (Go, static; ghostty-web frontend is vendored) ──
-FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.24 AS terminal-build
+# The Go toolchain comes from Red Hat's registry, not Docker Hub, whose anonymous
+# pull limits have failed CI runs. This is the RHEL 10.2 stream, the same Go the
+# runtime image installs with `dnf install golang`. Build stage only — nothing from
+# it is shipped. Bump the tag with the base image when RHEL moves on.
+FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi10/go-toolset:10.2 AS terminal-build
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src
@@ -42,7 +46,7 @@ COPY terminal/go.mod terminal/go.sum ./
 RUN go mod download
 COPY terminal/ ./
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} \
-    go build -trimpath -ldflags="-s -w" -o /out/pi-terminal .
+    go build -trimpath -ldflags="-s -w" -o /tmp/out/pi-terminal .
 
 # ── runtime image ─────────────────────────────────────────────────────────────────
 FROM ${BASE_IMAGE}
@@ -288,7 +292,7 @@ RUN set -eux; \
 COPY images/github-credentials.mjs /usr/local/bin/gh
 RUN chmod 0755 /usr/local/bin/gh
 COPY pi-agent/ /usr/share/pi-agent/
-COPY --from=terminal-build /out/pi-terminal /usr/local/bin/pi-terminal
+COPY --from=terminal-build /tmp/out/pi-terminal /usr/local/bin/pi-terminal
 RUN chmod 0755 /usr/local/bin/pi-terminal
 COPY images/entrypoint.sh /usr/local/bin/pi-pocket-entrypoint
 COPY images/embed-patch.sh /usr/local/bin/pi-pocket-embed-patch

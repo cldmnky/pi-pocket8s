@@ -1,6 +1,9 @@
 # Build stage. BUILDPLATFORM runs the Go toolchain natively; TARGETOS and
-# TARGETARCH select the cross-compiled binary for multi-arch manifests.
-FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.24 AS build
+# TARGETARCH select the cross-compiled binary for multi-arch manifests. The toolchain
+# comes from Red Hat's registry, not Docker Hub, whose anonymous pull limits have
+# failed CI builds. This is the RHEL 10.2 stream, the same Go the runtime image
+# installs with `dnf install golang`; it is only ever a build stage.
+FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi10/go-toolset:10.2 AS build
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src
@@ -8,7 +11,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} \
-    go build -trimpath -ldflags="-s -w" -o /out/portal .
+    go build -trimpath -ldflags="-s -w" -o /tmp/out/portal .
 
 # Runtime stage: latest UBI 10 minimal running as non-root UID 1000.
 # No credentials, package installs, or writable state are required.
@@ -16,7 +19,7 @@ FROM registry.access.redhat.com/ubi10/ubi-minimal:latest
 LABEL org.opencontainers.image.title="pi-pocket portal" \
       org.opencontainers.image.description="Runtime configuration and lifecycle portal for pi-pocket" \
       org.opencontainers.image.source="https://github.com/cldmnky/pi-pocket8s"
-COPY --from=build /out/portal /usr/local/bin/portal
+COPY --from=build /tmp/out/portal /usr/local/bin/portal
 USER 1000:1000
 EXPOSE 8080
 STOPSIGNAL SIGTERM

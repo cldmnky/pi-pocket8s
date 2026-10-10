@@ -139,7 +139,7 @@ Prefer immutable release/build tags for deployed workloads; `latest` is the init
 - `QUAY_USERNAME`: robot name, e.g. `cldmnky+pi_pocket_builder`.
 - `QUAY_TOKEN`: robot token (not a password), with write permission on both repositories.
 
-Pull requests build but never authenticate/push. Main/release/manual/maintenance builds refresh the UBI base. The separate validation workflow runs Go tests/vet, image entrypoint tests and Helm rendering assertions. Workflow files must be committed/pushed to GitHub before Actions can run; creating secrets alone does not publish local code.
+Pull requests build but never authenticate/push. Main/release/manual/maintenance builds refresh the UBI base. The workflow builds with **podman** and pulls only from `registry.access.redhat.com` and `quay.io` — Docker Hub's anonymous pull limits have failed runs, so no image reference may point there; see `images/README.md` for the tag policy. The separate validation workflow runs Go tests/vet, image entrypoint tests and Helm rendering assertions. Workflow files must be committed/pushed to GitHub before Actions can run; creating secrets alone does not publish local code.
 
 ## Install
 
