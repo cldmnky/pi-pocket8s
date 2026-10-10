@@ -255,6 +255,23 @@ jobs:
             exit 1
           fi
 
+          # libsndfile: what audio tooling in the workspace links against (soundfile, sox front ends,
+          # anything reading or writing WAV/FLAC/Ogg). Assert the shared library is present, not just
+          # the package name.
+          sudo podman exec smoke rpm -q libsndfile
+          sudo podman exec smoke sh -c 'ldconfig -p | grep -q libsndfile'
+
+          # The kimi-k3 strict-mode fix the image ships: Pi reads models.json once, at startup, so a
+          # workspace without it sends strict-mode tool schemas to a gateway that rejects them, and
+          # every tool-using request to that model fails with HTTP 400.
+          sudo podman exec smoke test -f /workspace/home/.pi/agent/models.json
+          sudo podman exec smoke jq -e '.providers["opencode-go"].modelOverrides["kimi-k3"].compat.supportsStrictMode == false' /workspace/home/.pi/agent/models.json
+
+          # The subagent machinery the pinned upstream ships: 0.12.2 delivers a failed subagent's run
+          # as a report through the courier instead of leaving the parent waiting for good. Assert the
+          # task the fix introduced is in the source the image runs.
+          sudo podman exec smoke grep -q 'pocket.subagent-courier' /opt/pi-pocket/src/server/extensions/subagents.ts
+
           # Node 24 with its built-in SQLite, plus the upstream runtime dependencies.
           sudo podman exec smoke node -e 'const { DatabaseSync } = require("node:sqlite"); new DatabaseSync(":memory:").exec("select 1"); console.log("node:sqlite ok")'
           sudo podman exec --workdir /opt/pi-pocket smoke node -e 'import("jiti").then(() => console.log("jiti ok"))'

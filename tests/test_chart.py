@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Render real Helm manifests and test critical security/lifecycle contracts."""
 import json
+import re
 import subprocess
 import unittest
 from pathlib import Path
@@ -198,6 +199,21 @@ class ChartTests(unittest.TestCase):
         ):
             with self.subTest(extra=extra), self.assertRaises(subprocess.CalledProcessError):
                 render(*options, *extra)
+
+    def test_chart_app_version_matches_the_pinned_upstream(self):
+        """The chart's appVersion names the pi-pocket the image ships, so a bump cannot update one and miss the other."""
+        chart = yaml.safe_load((ROOT / "charts/pi-pocket/Chart.yaml").read_text())
+        containerfile = (ROOT / "images/Containerfile").read_text()
+        versions = set(re.findall(r"^ARG PI_POCKET_VERSION=(.+)$", containerfile, re.M))
+        commits = set(re.findall(r"^ARG PI_POCKET_COMMIT=(.+)$", containerfile, re.M))
+        self.assertEqual(len(versions), 1, "PI_POCKET_VERSION is set once, to one value")
+        self.assertEqual(len(commits), 1, "PI_POCKET_COMMIT is set once, to one value")
+        self.assertEqual(chart["appVersion"], versions.pop(), "appVersion and PI_POCKET_VERSION disagree")
+        self.assertRegex(
+            commits.pop(),
+            r"^[0-9a-f]{40}$",
+            "pin a full commit sha: the build checks git rev-parse HEAD against it",
+        )
 
     def test_reject_unsafe_options(self):
         for options in (("replicas=2",), ("openshift.pocketSCC=privileged",), ("serviceAccount.namespaceRole=cluster-admin",), ("ingress.pocketHost=",), ("ingress.portalHost=",), ("ingress.enabled=false",)):

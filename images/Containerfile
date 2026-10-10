@@ -14,7 +14,7 @@ ARG BASE_IMAGE=registry.access.redhat.com/ubi10/ubi:latest
 FROM ${BASE_IMAGE} AS source
 
 ARG PI_POCKET_REPOSITORY=https://github.com/TannerMidd/pi-pocket.git
-ARG PI_POCKET_COMMIT=55849dd3769f1cc265404443193c1ab4385aeedb
+ARG PI_POCKET_COMMIT=e1298a0e8e674211d37ef71ecabef0ec8a9af13c
 
 RUN set -eux; \
     dnf install -y --setopt=install_weak_deps=False git \
@@ -51,8 +51,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)}
 # ── runtime image ─────────────────────────────────────────────────────────────────
 FROM ${BASE_IMAGE}
 
-ARG PI_POCKET_VERSION=0.11.0
-ARG PI_POCKET_COMMIT=55849dd3769f1cc265404443193c1ab4385aeedb
+ARG PI_POCKET_VERSION=0.12.2
+ARG PI_POCKET_COMMIT=e1298a0e8e674211d37ef71ecabef0ec8a9af13c
 ARG TARGETARCH
 
 ARG RIPGREP_VERSION=15.2.0
@@ -114,6 +114,7 @@ RUN set -eux; \
         libXext \
         libXfixes \
         libXrandr \
+        libsndfile \
         libxcb \
         libxkbcommon \
         make \
@@ -325,6 +326,16 @@ RUN set -eux; \
 COPY images/github-credentials.mjs /usr/local/bin/gh
 RUN chmod 0755 /usr/local/bin/gh
 COPY pi-agent/ /usr/share/pi-agent/
+# Fail the build if the shipped model fix loses its shape: Pi reads models.json once, at startup, and
+# a broken file is ignored silently, which would put kimi-k3 back to failing every tool-using request.
+RUN set -eux; \
+    test -f /usr/share/pi-agent/models.json; \
+    node -e ' \
+        const fix = require("/usr/share/pi-agent/models.json"); \
+        const entry = fix.providers?.["opencode-go"]?.modelOverrides?.["kimi-k3"]; \
+        if (entry?.compat?.supportsStrictMode !== false) throw new Error("the kimi-k3 strict-mode override is missing"); \
+        console.log("model fix ok"); \
+    '
 COPY --from=terminal-build /tmp/out/pi-terminal /usr/local/bin/pi-terminal
 RUN chmod 0755 /usr/local/bin/pi-terminal
 COPY images/entrypoint.sh /usr/local/bin/pi-pocket-entrypoint

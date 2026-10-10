@@ -2,7 +2,7 @@
 
 `images/Containerfile` builds `quay.io/cldmnky/pi-pocket`: upstream
 [pi-pocket](https://github.com/TannerMidd/pi-pocket) at pinned commit
-`55849dd3769f1cc265404443193c1ab4385aeedb` (v0.11.0) on UBI 10, plus an integrated
+`e1298a0e8e674211d37ef71ecabef0ec8a9af13c` (v0.12.2) on UBI 10, plus an integrated
 developer toolchain. It runs as a fixed non-root user and keeps everything it writes on
 the volumes mounted at `/workspace/home` and `/workspace/repos`.
 
@@ -31,11 +31,12 @@ verified against the vendor's published SHA-256; RPMS are GPG-verified by `dnf`.
 | Component | Source |
 | --- | --- |
 | Base | `registry.access.redhat.com/ubi10/ubi:latest` (multi-arch, RHEL 10) |
-| Pi Pocket | upstream commit `55849dd…`, cloned and `git rev-parse`-verified in the build, `npm ci` from the committed lockfile (with dev dependencies) into `/opt/pi-pocket` |
+| Pi Pocket | upstream commit `e1298a0…`, cloned and `git rev-parse`-verified in the build, `npm ci` from the committed lockfile (with dev dependencies) into `/opt/pi-pocket` |
 | Node | RHEL `nodejs24` (Node 24 + npm 11), exposed as `node`/`npm`/`npx` in `/usr/local/bin`; `node:sqlite` and `jiti` are runtime requirements |
 | Go | RHEL `golang` |
 | Python | RHEL `python3`, `python3-pip`, `python3-devel`, `venv` |
 | C/C++ | `gcc`, `gcc-c++`, `make`, `cmake`, `pkgconf`, `patch` |
+| Audio | `libsndfile` (WAV, FLAC, Ogg/Vorbis, Opus, AIFF and the rest, plus the C API) — what Python's `soundfile`, `librosa`, `sox` front ends, and most audio tooling link against. Installed because a workspace that processes audio files should not have to build it first |
 | SCM/SSH | `git`, `openssh`, `openssh-clients`, `known_hosts`/`authorized_keys` from the runtime secret |
 | Containers | `podman`, `buildah`, `skopeo`, with `/etc/containers/storage.conf` defaulting to the `vfs` driver (no `/dev/fuse`, no host devices) |
 | Kubernetes | pinned `kubectl` v1.35.6 (matches the 1.35 cluster; newer clients break skew policy), `oc` 4.22.17, `helm` v4.3.0, each checksum-verified |
