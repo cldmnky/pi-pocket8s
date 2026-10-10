@@ -1,13 +1,23 @@
 # Container images for Pi Pocket and its portal.
 #
 #   pull_request: build both architectures for both images, no push; the amd64
-#                 pi-pocket image is loaded and smoke tested.
-#   main/tags/manual/scheduled: same builds, pushed per architecture by digest to
+#                 pi-pocket image is smoke tested.
+#   main/tags/manual/scheduled: same builds, pushed per architecture to
 #                 quay.io/cldmnky/<image>, then merged into one manifest list
 #                 tagged sha-<commit> (immutable) and, on main only, latest.
 #
-# The pi-pocket image pins the upstream commit in images/Containerfile; scheduled runs
-# exist to pick up newer UBI 10 base images and RHEL packages.
+# Built with podman, the tool the Makefile and README use, and pulled only from
+# registry.access.redhat.com and quay.io: Docker Hub's anonymous pull limits have
+# failed whole runs (429/504 while resolving the Go build image), and nothing here
+# needs it. The pi-pocket image pins the upstream commit in images/Containerfile;
+# scheduled runs exist to pick up newer UBI 10 base images and RHEL packages.
+#
+# Each architecture builds on its own native runner (ubuntu-24.04-arm for arm64):
+# no QEMU, no binfmt registration, and no emulated RUN steps.
+#
+# The buildx cache (type=gha) has no podman equivalent: podman on the runners has
+# no GitHub cache backend, and a registry cache would mean pushing cache images
+# from pull requests. Builds run from the base image each time.
 name: images
 
 on:
@@ -47,7 +57,7 @@ env:
 jobs:
   build:
     name: build ${{ matrix.image }} (${{ matrix.arch }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -56,67 +66,78 @@ jobs:
           - image: pi-pocket
             containerfile: images/Containerfile
             context: .
+            runner: ubuntu-24.04
             platform: linux/amd64
             arch: amd64
           - image: pi-pocket
             containerfile: images/Containerfile
             context: .
+            runner: ubuntu-24.04-arm
             platform: linux/arm64
             arch: arm64
           - image: pi-pocket-portal
             containerfile: portal/Containerfile
             context: portal
+            runner: ubuntu-24.04
             platform: linux/amd64
             arch: amd64
           - image: pi-pocket-portal
             containerfile: portal/Containerfile
             context: portal
+            runner: ubuntu-24.04-arm
             platform: linux/arm64
             arch: arm64
     steps:
       - name: Check out
         uses: actions/checkout@v7
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v4
+      - name: Set up podman
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq podman
+          # Rootful podman: no subordinate-ID setup for the runner user, no
+          # rootless networking, and the same trust the docker daemon had here.
+          sudo podman version
 
       - name: Log in to Quay
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.QUAY_REGISTRY }}
-          username: ${{ secrets.QUAY_USERNAME }}
-          password: ${{ secrets.QUAY_TOKEN }}
+        env:
+          QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+          QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${QUAY_TOKEN}" | sudo podman login --username "${QUAY_USERNAME}" --password-stdin "${QUAY_REGISTRY}"
 
       - name: Build
         id: build
-        uses: docker/build-push-action@v7
-        with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.containerfile }}
-          platforms: ${{ matrix.platform }}
-          pull: true
-          provenance: false
-          # Push events push one architecture per job under a per-arch tag; the
-          # merge job joins the two tags into one manifest list. (By-digest
-          # pushes are not used: Quay does not resolve a just-pushed untagged
-          # digest reliably.) Pull requests build locally and only the amd64
-          # pi-pocket image is loaded for the smoke test.
-          outputs: ${{ github.event_name != 'pull_request' && format('type=image,name={0}/{1}/{2},push=true', env.QUAY_REGISTRY, env.QUAY_NAMESPACE, matrix.image) || '' }}
-          tags: ${{ github.event_name == 'pull_request' && format('local/{0}:pr', matrix.image) || format('{0}/{1}/{2}:sha-{3}-{4}', env.QUAY_REGISTRY, env.QUAY_NAMESPACE, matrix.image, github.sha, matrix.arch) }}
-          load: ${{ github.event_name == 'pull_request' && matrix.image == 'pi-pocket' && matrix.platform == 'linux/amd64' }}
-          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            tag="local/${{ matrix.image }}:pr"
+          else
+            tag="${QUAY_REGISTRY}/${QUAY_NAMESPACE}/${{ matrix.image }}:sha-${GITHUB_SHA}-${{ matrix.arch }}"
+          fi
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          sudo podman build --pull=always \
+            --platform "${{ matrix.platform }}" \
+            --file "${{ matrix.containerfile }}" \
+            --tag "${tag}" \
+            "${{ matrix.context }}"
+
+      - name: Push
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          sudo podman push --digestfile /tmp/digest "${{ steps.build.outputs.tag }}"
+          echo "pushed ${{ steps.build.outputs.tag }} $(cat /tmp/digest)"
 
       - name: Smoke test the pi-pocket image
         if: github.event_name == 'pull_request' && matrix.image == 'pi-pocket' && matrix.platform == 'linux/amd64'
         run: |
           set -euo pipefail
-          docker volume rm -f smoke-home smoke-repos >/dev/null 2>&1 || true
-          docker run --detach --name smoke --publish 127.0.0.1:8787:8787 --publish 127.0.0.1:8081:8081 \
+          sudo podman volume rm -f smoke-home smoke-repos >/dev/null 2>&1 || true
+          sudo podman run --detach --name smoke --publish 127.0.0.1:8787:8787 --publish 127.0.0.1:8081:8081 \
             --tmpfs /run/user/1000:rw,nosuid,nodev,mode=1777 \
             --env POCKET_FRAME_ANCESTORS=https://portal.example.com \
             --env TERMINAL_FRAME_ANCESTORS=https://portal.example.com \
@@ -135,7 +156,7 @@ jobs:
             sleep 2
           done
 
-          docker logs smoke || true
+          sudo podman logs smoke || true
           if [ "${ready}" != "1" ]; then
             echo "::error::pi-pocket did not answer on :8787 (last status: ${status:-none})"
             exit 1
@@ -143,29 +164,29 @@ jobs:
 
           # The entrypoint prepared the persistent workspace and skipped the
           # kubeconfig (no service account is mounted here).
-          docker exec smoke test -d /workspace/home/.pi
-          docker exec smoke test -d /workspace/home/.pi-pocket
-          docker exec smoke test -d /workspace/home/.ssh
-          docker exec smoke sh -c 'test ! -e /workspace/home/.kube/config'
+          sudo podman exec smoke test -d /workspace/home/.pi
+          sudo podman exec smoke test -d /workspace/home/.pi-pocket
+          sudo podman exec smoke test -d /workspace/home/.ssh
+          sudo podman exec smoke sh -c 'test ! -e /workspace/home/.kube/config'
 
           # The entrypoint seeds the shipped Pi skill and /agent-browser prompt
           # template into the workspace home (copy-if-missing).
-          docker exec smoke test -f /workspace/home/.pi/agent/skills/agent-browser/SKILL.md
-          docker exec smoke test -f /workspace/home/.pi/agent/prompts/agent-browser.md
+          sudo podman exec smoke test -f /workspace/home/.pi/agent/skills/agent-browser/SKILL.md
+          sudo podman exec smoke test -f /workspace/home/.pi/agent/prompts/agent-browser.md
 
           # Nested-container Podman support: vfs storage, a subuid/subgid range inside
           # the pod's outer 65536-uid mapping, and setuid/filecap helper binaries.
-          docker exec smoke sh -c 'grep -q "driver = \"vfs\"" /etc/containers/storage.conf'
-          docker exec smoke sh -c 'grep -qx "pocket:10000:50000" /etc/subuid && grep -qx "pocket:10000:50000" /etc/subgid'
-          docker exec smoke sh -c 'getcap /usr/bin/newuidmap | grep -q cap_setuid && getcap /usr/bin/newgidmap | grep -q cap_setgid'
+          sudo podman exec smoke sh -c 'grep -q "driver = \"vfs\"" /etc/containers/storage.conf'
+          sudo podman exec smoke sh -c 'grep -qx "pocket:10000:50000" /etc/subuid && grep -qx "pocket:10000:50000" /etc/subgid'
+          sudo podman exec smoke sh -c 'getcap /usr/bin/newuidmap | grep -q cap_setuid && getcap /usr/bin/newgidmap | grep -q cap_setgid'
 
           # The owner sign-in token and its QR code must not reach the container log;
           # the token itself stays in config.json (never printed by this job). The
-          # log is captured once: piping into `grep -q` can kill `docker logs` with
+          # log is captured once: piping into `grep -q` can kill `podman logs` with
           # SIGPIPE (141) under pipefail, and with an early match would also make
           # the leak check below a silent no-op.
-          logs="$(docker logs smoke 2>&1)"
-          token="$(docker exec smoke node -e 'const { ownerToken } = require("/workspace/home/.pi-pocket/config.json"); process.stdout.write(ownerToken)')"
+          logs="$(sudo podman logs smoke 2>&1)"
+          token="$(sudo podman exec smoke node -e 'const { ownerToken } = require("/workspace/home/.pi-pocket/config.json"); process.stdout.write(ownerToken)')"
           if [ -z "${token}" ]; then
             echo "::error::could not read the owner token from config.json"
             exit 1
@@ -178,8 +199,8 @@ jobs:
           grep -q 'QR code hidden' <<<"${logs}" || { echo "::error::the sign-in QR code was not hidden in the log"; exit 1; }
 
           # The portal-iframe embed patches applied to the pinned upstream sources.
-          docker exec smoke sh -c 'grep -qx "        .frame-ancestors .self. https://portal.example.com.," /opt/pi-pocket/src/server/http/assets.ts'
-          docker exec smoke sh -c '[ "$(grep -c SameSite=None /opt/pi-pocket/src/server/auth.ts)" = 2 ]'
+          sudo podman exec smoke sh -c 'grep -qx "        .frame-ancestors .self. https://portal.example.com.," /opt/pi-pocket/src/server/http/assets.ts'
+          sudo podman exec smoke sh -c '[ "$(grep -c SameSite=None /opt/pi-pocket/src/server/auth.ts)" = 2 ]'
           grep -q 'embedded mode enabled for https://portal.example.com' <<<"${logs}" || { echo "::error::the embed patch did not apply"; exit 1; }
 
           # Web terminal daemon: health check, auth gate, framing/CSP headers,
@@ -202,8 +223,8 @@ jobs:
           # The web_search extension the image ships as a Pi Pocket built-in: the module and its
           # vendored provider code are in place, it still installs its tool, and the running app
           # loaded it (a module that fails to load is reported in the log and left off).
-          docker exec smoke test -f /opt/pi-pocket/src/server/extensions/web-search/vendor/providers/openai.ts
-          docker exec --workdir /opt/pi-pocket smoke node --input-type=module -e '
+          sudo podman exec smoke test -f /opt/pi-pocket/src/server/extensions/web-search/vendor/providers/openai.ts
+          sudo podman exec --workdir /opt/pi-pocket smoke node --input-type=module -e '
             const { default: createWebSearch } = await import("/opt/pi-pocket/src/server/extensions/web-search.ts");
             const extension = createWebSearch({ notice() {} });
             if (extension.name !== "pocket-web-search") throw new Error("unexpected extension name: " + extension.name);
@@ -218,11 +239,11 @@ jobs:
           # The agent-types extension, and the subagent types it ships as data. The entrypoint
           # seeds them into the workspace home (copy-if-missing, above); the module must load and
           # install its tool and section wraps, and the running app must not have failed it.
-          docker exec smoke test -f /workspace/home/.pi/agent/agents/architect.md
-          docker exec smoke test -f /workspace/home/.pi/agent/agents/coder.md
-          docker exec smoke test -f /workspace/home/.pi/agent/agents/reviewer.md
-          docker exec smoke test -f /workspace/home/.pi/agent/agents/_readme.md
-          docker exec --workdir /opt/pi-pocket smoke node --input-type=module -e '
+          sudo podman exec smoke test -f /workspace/home/.pi/agent/agents/architect.md
+          sudo podman exec smoke test -f /workspace/home/.pi/agent/agents/coder.md
+          sudo podman exec smoke test -f /workspace/home/.pi/agent/agents/reviewer.md
+          sudo podman exec smoke test -f /workspace/home/.pi/agent/agents/_readme.md
+          sudo podman exec --workdir /opt/pi-pocket smoke node --input-type=module -e '
             const { default: createAgentTypes } = await import("/opt/pi-pocket/src/server/extensions/agent-types.ts");
             const extension = createAgentTypes({ notice() {}, agentDir: "/usr/share/pi-agent" });
             if (extension.name !== "agent-types") throw new Error("unexpected extension name: " + extension.name);
@@ -235,35 +256,35 @@ jobs:
           fi
 
           # Node 24 with its built-in SQLite, plus the upstream runtime dependencies.
-          docker exec smoke node -e 'const { DatabaseSync } = require("node:sqlite"); new DatabaseSync(":memory:").exec("select 1"); console.log("node:sqlite ok")'
-          docker exec --workdir /opt/pi-pocket smoke node -e 'import("jiti").then(() => console.log("jiti ok"))'
-          docker exec smoke rg --version
-          docker exec smoke chromium --version
-          docker exec smoke agent-browser --version
+          sudo podman exec smoke node -e 'const { DatabaseSync } = require("node:sqlite"); new DatabaseSync(":memory:").exec("select 1"); console.log("node:sqlite ok")'
+          sudo podman exec --workdir /opt/pi-pocket smoke node -e 'import("jiti").then(() => console.log("jiti ok"))'
+          sudo podman exec smoke rg --version
+          sudo podman exec smoke chromium --version
+          sudo podman exec smoke agent-browser --version
           # agent-browser drives the bundled headless Chromium over CDP: open a
           # page in an isolated session, snapshot it, screenshot it, then close.
           # /run/user/1000 is the chart's emptyDir in-cluster; the smoke run
           # mounts an equivalent tmpfs so the daemon has a socket directory.
-          docker exec -e AGENT_BROWSER_SESSION=smoke smoke agent-browser open https://example.com | grep -q 'Example Domain'
-          docker exec -e AGENT_BROWSER_SESSION=smoke smoke agent-browser snapshot -i | grep -q 'Learn more'
-          docker exec -e AGENT_BROWSER_SESSION=smoke smoke agent-browser screenshot /tmp/agent-browser-smoke.png
-          docker exec smoke test -s /tmp/agent-browser-smoke.png
-          docker exec -e AGENT_BROWSER_SESSION=smoke smoke agent-browser close
-          docker exec smoke kubectl version --client
-          docker exec smoke helm version
-          docker exec smoke oc version --client
+          sudo podman exec -e AGENT_BROWSER_SESSION=smoke smoke agent-browser open https://example.com | grep -q 'Example Domain'
+          sudo podman exec -e AGENT_BROWSER_SESSION=smoke smoke agent-browser snapshot -i | grep -q 'Learn more'
+          sudo podman exec -e AGENT_BROWSER_SESSION=smoke smoke agent-browser screenshot /tmp/agent-browser-smoke.png
+          sudo podman exec smoke test -s /tmp/agent-browser-smoke.png
+          sudo podman exec -e AGENT_BROWSER_SESSION=smoke smoke agent-browser close
+          sudo podman exec smoke kubectl version --client
+          sudo podman exec smoke helm version
+          sudo podman exec smoke oc version --client
 
       - name: Clean up the smoke container
         if: always() && github.event_name == 'pull_request' && matrix.image == 'pi-pocket' && matrix.platform == 'linux/amd64'
         run: |
-          docker rm -f smoke >/dev/null 2>&1 || true
-          docker volume rm -f smoke-home smoke-repos >/dev/null 2>&1 || true
+          sudo podman rm -f smoke >/dev/null 2>&1 || true
+          sudo podman volume rm -f smoke-home smoke-repos >/dev/null 2>&1 || true
 
   merge:
     name: merge ${{ matrix.image }}
     if: github.event_name != 'pull_request'
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -272,27 +293,46 @@ jobs:
           - pi-pocket
           - pi-pocket-portal
     steps:
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v4
+      - name: Set up podman
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq podman skopeo
 
       - name: Log in to Quay
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.QUAY_REGISTRY }}
-          username: ${{ secrets.QUAY_USERNAME }}
-          password: ${{ secrets.QUAY_TOKEN }}
+        env:
+          QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+          QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${QUAY_TOKEN}" | sudo podman login --username "${QUAY_USERNAME}" --password-stdin "${QUAY_REGISTRY}"
 
       - name: Create the multi-arch manifest
         env:
           IMAGE: ${{ env.QUAY_REGISTRY }}/${{ env.QUAY_NAMESPACE }}/${{ matrix.image }}
         run: |
           set -euo pipefail
-          refs=("${IMAGE}:sha-${GITHUB_SHA}-amd64" "${IMAGE}:sha-${GITHUB_SHA}-arm64")
+          refs=("docker://${IMAGE}:sha-${GITHUB_SHA}-amd64" "docker://${IMAGE}:sha-${GITHUB_SHA}-arm64")
 
-          tags=("--tag" "${IMAGE}:sha-${GITHUB_SHA}")
+          # Both per-architecture images are already in the registry. Build the index
+          # from those references and push the index only (`--all=false`, and the
+          # default is `--all`): pushing the images again would re-upload every layer
+          # a second time. A missing architecture makes `manifest create` fail, so a
+          # partial index cannot be published quietly.
+          sudo podman manifest create "${IMAGE}:sha-${GITHUB_SHA}" "${refs[@]}"
+          sudo podman manifest push --all=false "${IMAGE}:sha-${GITHUB_SHA}" "docker://${IMAGE}:sha-${GITHUB_SHA}"
+
           if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-            tags+=("--tag" "${IMAGE}:latest")
+            sudo podman manifest push --all=false "${IMAGE}:sha-${GITHUB_SHA}" "docker://${IMAGE}:latest"
           fi
 
-          docker buildx imagetools create "${tags[@]}" "${refs[@]}"
-          docker buildx imagetools inspect "${IMAGE}:sha-${GITHUB_SHA}"
+          # The published index must reference exactly the two images that were built.
+          index="$(sudo skopeo inspect --raw "docker://${IMAGE}:sha-${GITHUB_SHA}")"
+          for ref in "${refs[@]}"; do
+            digest="$(sudo skopeo inspect --format '{{.Digest}}' "${ref}")"
+            if ! grep -q "${digest#sha256:}" <<<"${index}"; then
+              echo "::error::${IMAGE}:sha-${GITHUB_SHA} does not reference ${ref} (${digest})"
+              exit 1
+            fi
+          done
+          echo "${index}"
