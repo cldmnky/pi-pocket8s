@@ -293,5 +293,27 @@ incomplete cleanup), activation bounds, the portal authorization matrix
 malformed state, stale Pod UID, foreign link origin, expired session), and the
 recent-login rule. Chart tests render both profiles under Helm 3.19 and Helm 4
 and assert the scope-split RBAC, the inert binding, and the retained
-default-deny posture. Live validation in dedicated test namespaces is recorded
-separately below once performed.
+default-deny posture.
+
+**Live validation (2026-10-10, dedicated PR test namespaces).** The branch was
+built in-cluster from its commit and installed as three releases: the workspace
+(`pi-pocket-pr13`), the management release with elevation enabled
+(`pi-pocket-pr13-mgmt`), and the stopped admin release
+(`pi-pocket-pr13-admin`). Observed: idle state with an empty binding and no admin
+Pod; the normal workspace still refused cluster-scoped reads
+(`kubectl get nodes` → Forbidden, `can-i list nodes` → no); activation produced
+`Active` with exactly the configured subject and a Pod whose UID matched the
+published `owner-login-pod-uid`; the elevated workspace could list nodes and
+cluster-wide Secrets while the normal workspace still could not; revocation and a
+50-second expiry both converged to `Idle` with the grant, workspace, and published
+link removed; injecting a foreign subject into the managed binding produced
+`binding_not_owned`/`CleanupRequired` without the controller mutating the drifted
+object, and the runbook's manual `subjects: []` step converged it to `Idle`; a
+second session received a different owner token; and both a portal restart and a
+controller restart left the session `Active` with `expiresAt` unchanged.
+
+The browser GitHub OAuth click-through was not exercised live: the GitHub App's
+registered callback URL is bound to the production portal host, so a
+test-namespace portal origin cannot complete the exchange. That path is covered
+by the offline authorization matrix, and the controller/workspace path was
+validated live as described.
