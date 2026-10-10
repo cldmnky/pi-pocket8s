@@ -328,3 +328,27 @@ registered callback URL is bound to the production portal host, so a
 test-namespace portal origin cannot complete the exchange. That path is covered
 by the offline authorization matrix, and the controller/workspace path was
 validated live as described.
+
+**Second live round (token-mode opt-in, same day).** With
+`adminElevation.allowTokenAuth=true` the whole lifecycle was driven through the
+live portal HTTP API and then through the real SPA in a browser: status →
+activate → grant → elevated read → access link → revoke, plus UI-driven
+activation and revocation with the confirmation dialogs. Three defects were
+found only by doing that:
+
+1. The controller treated an approval without a numeric GitHub user ID as
+   malformed, so a token-mode activation was accepted by the portal and then
+   immediately revoked with `invalid_approval`. The record now carries
+   `approvedByKind` (`github` or `token`), and only a `token` kind may omit the
+   ID.
+2. Revocation returned `409`: the controller rewrites observation fields every
+   few seconds, so the `resourceVersion` a browser loaded from
+   `/api/admin/status` is stale within one reconcile pass. Both transitions now
+   run as a bounded compare-and-swap loop against freshly loaded state, and
+   revocation ignores the client's version entirely — an emergency stop must
+   never fail on a stale snapshot. The safety decision (no concurrent session,
+   cleanup complete, something to revoke) is made from live state, which is
+   stronger than version equality.
+3. The panel refreshed only on user action, so it could show a stale countdown,
+   a frozen "observed Ns ago", or a session another operator had already
+   revoked. It now re-reads status every ten seconds while the tab is open.
