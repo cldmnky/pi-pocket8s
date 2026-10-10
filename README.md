@@ -264,7 +264,9 @@ Public keys from the portal are exposed as `~/.ssh/authorized_keys` for tools/co
 
 The image ships an agent **web search** tool: `web_search`, a Pi Pocket built-in extension
 (`extensions/` in this repository, installed under `/opt/pi-pocket/src/server/extensions/`).
-It is on by default and can be turned off — or back on — in Menu → Extensions.
+It is on by default and can be turned off — or back on — in Menu → Extensions. The same extension
+ships **`web_fetch`**, which reads one URL without a model: see
+[Reading pages](#reading-pages-web_fetch) below.
 
 It calls the **search model's own provider API** rather than scraping: Google Gemini grounding,
 OpenAI/Codex Responses, xAI Grok, Anthropic, DeepSeek, Ollama Cloud and OpenCode Zen/Go. Which
@@ -302,6 +304,17 @@ Costs and access: a search is a **billable model call on the install's own provi
 conversation uses. Nothing is fetched from a search provider that the install has no credentials
 for, and no search runs unless the agent calls the tool. Details, verification and the vendored
 upstream source: [`extensions/web-search/`](extensions/web-search/README.md).
+
+### Reading pages: `web_fetch`
+
+The same extension also ships **`web_fetch`**, which reads one http(s) address and returns it as
+text: page text with headings, lists and links, or a JSON/plain-text body as it is. It runs **no
+model** — a plain GET, so it costs nothing and works whatever the install uses for search — and
+it is bounded: at most 5 redirects, 30 seconds, 5 MB read, and an answer no larger than the
+application's tool-output limit. Images, PDFs and other binaries come back as their type and size,
+not as bytes. It is a reader, not a browser: no JavaScript, no cookies, no login state. Since the
+workspace pod could already make that same GET with `curl`, this adds a readable rendering, not new
+reach.
 
 ## Development tools and cluster access
 

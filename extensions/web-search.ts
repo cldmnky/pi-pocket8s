@@ -1,7 +1,10 @@
 /**
- * Web search through the model provider's own search tools: Google Gemini grounding (and URL
- * Context), OpenAI and Codex Responses, xAI Grok, Anthropic, DeepSeek, Ollama Cloud and OpenCode
- * Zen/Go.
+ * Web search through the model provider's own search tools, and `web_fetch` for reading one URL.
+ *
+ * Search runs on the provider's search tools: Google Gemini grounding (and URL Context), OpenAI and
+ * Codex Responses, xAI Grok, Anthropic, DeepSeek, Ollama Cloud and OpenCode Zen/Go. `web_fetch`
+ * needs no provider at all: fetching a page is a plain network read, so the tools sit together but
+ * only search is a billable model call.
  *
  * Shipped as a Pi Pocket built-in extension: the image installs this file as
  * `src/server/extensions/web-search.ts` in the application, where the extension loader picks it up
@@ -15,9 +18,11 @@
  * search is a model call on that provider's account, so it costs tokens.
  */
 import { Type } from "@earendil-works/pi-ai";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, truncateHead } from "@earendil-works/pi-coding-agent";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
 import type { PocketHost } from "/opt/pi-pocket/src/server/host.ts";
 import { clearPin, describeWriteFailure, pinPath, pinSource, readPin, writePin } from "./web-search/config.ts";
+import { cutText, FetchError, fetchPage, MAX_BODY_BYTES, type FetchedPage } from "./web-search/fetch.ts";
 import { modelRegistry, searchContext } from "./web-search/model.ts";
 import { pickSearchModel, rank, type SearchCandidate } from "./web-search/select.ts";
 import { webSearch, WebSearchSchema } from "./web-search/vendor/web_search.ts";
@@ -89,6 +94,90 @@ function webSearchTool(agentDir: string) {
                 content: [{ type: "text" as const, text: answer }],
                 ...(failed ? { isError: true } : {}),
                 ...(Object.keys(details).length > 0 ? { details } : {}),
+            };
+        },
+    });
+}
+
+/**
+ * Reading one address, without a model in the middle: the search providers summarize what they
+ * find, and this is how the agent gets a whole page (or a JSON document) instead of a summary.
+ */
+function webFetchTool() {
+    return defineTool({
+        name: "web_fetch",
+        description:
+            "Fetch one http(s) address and return its readable text: a page's text with headings, lists and links, or a text/JSON body as it is. Use it to read a page a search returned or a link someone gave you. Text only — no images, PDFs or other binaries — and one address per call.",
+        parameters: Type.Object({
+            url: Type.String({ description: "Absolute http(s) address to fetch" }),
+        }),
+        // A fetch is a read: fetching again after an interruption is harmless.
+        replay: "safe",
+        execute: async (args) => {
+            let page: FetchedPage;
+
+            try {
+                page = await fetchPage(args.url);
+            } catch (error) {
+                const message =
+                    error instanceof FetchError
+                        ? error.message
+                        : `web_fetch could not read ${args.url}: ${String(error)}`;
+
+                return { content: [{ type: "text" as const, text: message }], isError: true };
+            }
+
+            const details: Record<string, string | number | boolean> = { url: page.url, status: page.status };
+            if (page.contentType !== "") details.contentType = page.contentType;
+            if (page.bytes !== undefined) details.bytes = page.bytes;
+            if (page.binary) details.binary = true;
+            if (page.truncated) details.truncated = true;
+
+            if (page.binary) {
+                // Saying what it is beats dumping it: the model has no use for base64 image bytes.
+                const size = page.bytes === undefined ? " of unknown size" : `, ${formatSize(page.bytes)}`;
+                return {
+                    content: [
+                        {
+                            type: "text" as const,
+                            text: `${page.url} serves ${page.contentType || "a file type this tool does not know"}${size}. web_fetch returns text (HTML, JSON, plain text) only; download the file in the workspace if its bytes matter.`,
+                        },
+                    ],
+                    details,
+                };
+            }
+
+            // The page's own limit is the network read; this is the application's output limit, so a
+            // page that arrived whole can still come back partly.
+            const pageText = page.text.trim();
+            const limited = truncateHead(pageText, {
+                maxLines: DEFAULT_MAX_LINES,
+                maxBytes: DEFAULT_MAX_BYTES,
+            });
+            // A page that is one line longer than the whole budget has no line to keep, and would come
+            // back empty; keep its head instead, so minified JSON still answers something.
+            const body = limited.firstLineExceedsLimit ? cutText(pageText, DEFAULT_MAX_BYTES) : limited.content.trim();
+            const notes: string[] = [];
+
+            if (limited.truncated) {
+                notes.push(`[Truncated: the page text is longer than the ${formatSize(DEFAULT_MAX_BYTES)} this tool returns.]`);
+            }
+            if (page.truncated) {
+                notes.push(`[The page was longer than the ${formatSize(MAX_BODY_BYTES)} web_fetch downloads, so its end was not read.]`);
+            }
+            if (page.url !== args.url.trim()) {
+                notes.push(`(Fetched ${page.url}: the address redirected.)`);
+            }
+
+            const status = `${page.status}${page.contentType === "" ? "" : `, ${page.contentType}`}`;
+            const text =
+                body === ""
+                    ? `No readable text at ${page.url} (HTTP ${status}).`
+                    : `${page.title === undefined ? "" : `# ${page.title}\n\n`}${body}`;
+
+            return {
+                content: [{ type: "text" as const, text: text + (notes.length === 0 ? "" : `\n\n${notes.join("\n\n")}`) }],
+                details,
             };
         },
     });
@@ -254,6 +343,6 @@ function text(body: string) {
 export default function createWebSearch(host: PocketHost) {
     return defineExtension({
         name: "pocket-web-search",
-        tools: [webSearchTool(host.agentDir), configTool(host.agentDir)],
+        tools: [webSearchTool(host.agentDir), webFetchTool(), configTool(host.agentDir)],
     });
 }

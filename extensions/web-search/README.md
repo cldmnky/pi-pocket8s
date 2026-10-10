@@ -1,23 +1,32 @@
 # web-search
 
-The agent's `web_search` tool, shipped inside the pi-pocket image as a Pi Pocket
-**built-in extension**: `images/Containerfile` installs this directory as
-`src/server/extensions/web-search.ts` plus `src/server/extensions/web-search/`
-in the application, where Pi Pocket's extension loader finds it and loads it by
-default. It needs no PVC file and no enabling, and the owner can turn it off (or
-back on) in Menu → Extensions like any other module.
+The agent's `web_search` and `web_fetch` tools, shipped inside the pi-pocket
+image as a Pi Pocket **built-in extension**: `images/Containerfile` installs this
+directory as `src/server/extensions/web-search.ts` plus
+`src/server/extensions/web-search/` in the application, where Pi Pocket's
+extension loader finds it and loads it by default. It needs no PVC file and no
+enabling, and the owner can turn it off (or back on) in Menu → Extensions like
+any other module.
 
-A search runs through the **model provider's own search API**, not a scraper:
-Google Gemini grounding (and URL Context), OpenAI and Codex Responses, xAI Grok,
-Anthropic, DeepSeek, Ollama Cloud, OpenCode Zen/Go.
+Two tools, two very different mechanisms:
+
+- **`web_search`** runs through the **model provider's own search API**, not a
+  scraper: Google Gemini grounding (and URL Context), OpenAI and Codex Responses,
+  xAI Grok, Anthropic, DeepSeek, Ollama Cloud, OpenCode Zen/Go. It is a billable
+  model call on the install's credentials.
+- **`web_fetch`** reads one http(s) address itself — a plain HTTP GET, no model,
+  no cost — and returns the page as text. It is what turns a search result into
+  something the agent has actually read.
 
 | File | What it is |
 | --- | --- |
-| `web-search.ts` | The module the loader imports: one `web_search` tool. |
+| `web-search.ts` | The module the loader imports: `web_search`, `web_fetch`, `web_search_config`. |
 | `web-search/select.ts` | Which model a search runs on when the install has not named one. |
 | `web-search/model.ts` | Pi's model runtime, and the context shim the vendored code expects. |
+| `web-search/fetch.ts` | `web_fetch`: URL rules, the bounded read, HTML → text. Imports nothing, so `node --test` covers it. |
 | `web-search/vendor/` | pi-web-search 1.7.0, unmodified — see `NOTICE.md`. |
 | `web-search.test.mjs` | Unit test for the picker. `make test` runs it. |
+| `web-fetch.test.mjs` | Unit test for the fetch module, against a loopback server. `make test` runs it. |
 
 Two layers exist because pi-web-search is a **Pi** extension (`pi.registerTool`,
 pi-tui rendering) and Pi Pocket loads **Pi Durable** extensions
@@ -101,6 +110,38 @@ Costs, from the operator's account: a search is a model call on the search
 provider, and the result text then goes to the model the conversation is using.
 Each search is bounded at 180 seconds.
 
+## Reading a page: `web_fetch`
+
+A search answers with snippets and a source list; `web_fetch` is how the agent
+reads one of those addresses in full — or any http(s) URL a person pastes.
+
+| Property | Behaviour |
+| --- | --- |
+| Cost | none: a plain HTTP GET, no model call, no provider credentials |
+| Request | GET only; no cookies, no login state, no headers beyond a plain user agent |
+| Redirects | followed by hand, at most 5 hops, each re-checked to be http(s) |
+| Timeout | 30 s for the whole request, redirects included |
+| Body read | at most 5 MB; a longer page says so and stops there |
+| Answer | capped at the application's tool-output limit (2000 lines / 50 KB) |
+| Formats | HTML and XML reduced to readable text; JSON and plain text passed through as they are; anything else reported by type and size, never returned |
+| URL rules | `http`/`https` only; a URL with `user:password@` is refused |
+
+HTML is reduced locally, in `web-search/fetch.ts`: script, style and head are
+dropped, headings, list items and table rows become lines of their own, links
+become `[text](url)`, code blocks keep their indentation, and entities are
+decoded after the markup has been read (so `&lt;div&gt;` stays text).
+
+It is a reader, not a browser: no JavaScript, no cookies, no session, and no
+`robots.txt` check — the same GET the agent's shell could already make with
+`curl`, wrapped so the answer is text instead of markup. It therefore adds **no
+new reach**: whatever the pod can reach, `web_fetch` can read, and it is bounded
+in time, redirects and bytes rather than open-ended.
+
+The upstream package's `url_context` tool is not this: it sends the URLs to a
+Gemini (or Ollama) model, costs a call there, and answers with that model's
+summary. `web_fetch` runs on any install, whatever model is configured for
+search, and returns the page itself.
+
 ## Refreshing the vendored code
 
 ```bash
@@ -112,7 +153,12 @@ cp -a package/src/. extensions/web-search/vendor/
 
 Then re-check `NOTICE.md`, re-run `make test`, and build the image
 (`make image`) — the Containerfile fails the build if the module no longer loads
-or stops installing its tool.
+or stops installing its tools.
+
+`web_fetch` is **not** vendored: it lives in the adapter (`web-search/fetch.ts`)
+because pi-web-search 1.7.0 has no equivalent tool — its `url_context` sends the
+URLs to a model, which is a different thing at a different cost. A vendoring
+refresh leaves `fetch.ts` alone; keep it that way.
 
 ## Verifying by hand
 
@@ -127,7 +173,8 @@ node --input-type=module -e '
 ```
 
 A real search is a billable model call; run one from a conversation, or check
-Menu → Extensions for the module and its error state.
+Menu → Extensions for the module and its error state. `web_fetch` needs no
+credential: fetch a public page and see the text come back.
 
 ## Known rough edge
 
