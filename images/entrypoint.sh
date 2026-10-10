@@ -18,6 +18,7 @@ readonly SA_DIR="/var/run/secrets/kubernetes.io/serviceaccount"
 readonly API_KEYS_FILE="${CONFIG_DIR}/api-keys.json"
 readonly WEB_SEARCH_FILE="${CONFIG_DIR}/web-search.json"
 readonly OWNER_LOGIN_KEY="owner-login-url"
+readonly OWNER_LOGIN_POD_UID_KEY="owner-login-pod-uid"
 
 # The only secret keys that may become environment variables. Anything else in
 # api-keys.json is ignored, so the runtime secret cannot inject arbitrary env.
@@ -319,7 +320,7 @@ sync_owner_url() {
         return 0
     fi
 
-    local token url encoded body code
+    local token url encoded pod_uid encoded_uid body code
     token="$(jq -r '.ownerToken // empty' "${config}" 2>/dev/null)" || token=""
     if [ -z "${token}" ]; then
         warn "could not read ownerToken from ${config}"
@@ -327,7 +328,12 @@ sync_owner_url() {
     fi
     url="${public%/}/login?token=${token}"
     encoded="$(printf '%s' "${url}" | base64 -w0)"
-    body="$(jq -n --arg v "${encoded}" --arg k "${OWNER_LOGIN_KEY}" '{data: {($k): $v}}' 2>/dev/null)" || body=""
+    # The Pod UID ties the link to the Pod that published it. The portal and
+    # controller refuse to present a link whose UID is not the currently
+    # observed workspace Pod, so a replaced Pod cannot serve a stale link.
+    pod_uid="${POD_UID:-}"
+    encoded_uid="$(printf '%s' "${pod_uid}" | base64 -w0)"
+    body="$(jq -n --arg v "${encoded}" --arg k "${OWNER_LOGIN_KEY}" --arg u "${encoded_uid}" --arg uk "${OWNER_LOGIN_POD_UID_KEY}" '{data: {($k): $v, ($uk): $u}}' 2>/dev/null)" || body=""
     if [ -z "${body}" ]; then
         warn "could not encode owner link"
         return 0

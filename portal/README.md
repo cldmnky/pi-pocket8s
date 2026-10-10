@@ -38,7 +38,10 @@ portal's own CSP permits `frame-src` for the configured agent origin only.
   Lax) held only in server memory and re-validated against membership at
   least every 5 minutes (a required re-check that fails means access fails).
   Bearer-token login is **disabled** in this mode; cookie mutations require a
-  matching `Origin`, so there is no cookie-free bypass. GitHub mode also
+  matching `Origin`, so there is no cookie-free bypass. Cluster-admin elevation refuses token mode by default for the same reason:
+  a namespace-admin workspace can read the portal token Secret, so the shared
+  token must not silently become an elevation credential. The explicit
+  `adminElevation.allowTokenAuth` opt-in accepts that tradeoff for lab use. GitHub mode also
   enables the credential broker (see below) and requires the portal to run in
   a different namespace from the agent's (`POCKET_NAMESPACE` names that
   workspace namespace; startup refuses same-namespace GitHub mode because the
@@ -105,6 +108,18 @@ portal's own CSP permits `frame-src` for the configured agent origin only.
 | `GITHUB_ORGANIZATION` / `GITHUB_TEAM` | GitHub mode | Membership gate; team optional. |
 | `GITHUB_REPOSITORY_POLICY_SECRET` | GitHub mode | Retained allowlist Secret in the portal management namespace. The broker reads `repositories.json` on every request; missing, unreadable or invalid policy fails closed. Legacy `GITHUB_REPOSITORIES` is ignored. |
 | `GITHUB_REPOSITORY_INSTALLATIONS` | no | JSON object mapping additional repository owners to numeric installation IDs of the same App, e.g. `{"cldmnky":789012}`. Empty/unset preserves organization-only access. Foreign owners require an explicit mapping; this does not replace the repository allow-list or change the login gate. |
+| `ADMIN_ELEVATION_ENABLED` | no | `true` enables the cluster-admin elevation API and requires GitHub mode plus the `ADMIN_*` target below. Default off: no admin routes, no controller, no elevation behaviour. |
+| `ADMIN_NAMESPACE` / `ADMIN_DEPLOYMENT` / `ADMIN_SERVICE_ACCOUNT` / `ADMIN_RUNTIME_SECRET` | elevation | The one admin workspace this portal may elevate: its namespace, Deployment, service account, and runtime Secret. Must be a third namespace, distinct from the workspace and the portal. |
+| `ADMIN_POCKET_URL` / `ADMIN_TERMINAL_URL` | elevation | Public `https` origins of the admin workspace and terminal. A returned sign-in link must match the workspace origin. |
+| `ADMIN_SESSION_SECRET` | elevation | Management-namespace Secret holding the single elevation session record. |
+| `ADMIN_CLUSTER_ROLE_BINDING` / `ADMIN_CLUSTER_ROLE` | elevation | The predefined inert binding the controller manages, and the role it references (default `cluster-admin`). |
+| `ADMIN_OPERATORS` | elevation | Comma-separated **numeric** GitHub user IDs allowed to activate. Organization ownership is not sufficient; logins can be renamed. |
+| `ADMIN_DEFAULT_DURATION_SECONDS` / `ADMIN_MAX_DURATION_SECONDS` | elevation | Session bounds: default 900, maximum 1800, hard maximum 3600. |
+| `ADMIN_RECENT_LOGIN_SECONDS` | elevation | How recent a GitHub sign-in must be for activation and sign-in-link retrieval (revocation is exempt). |
+| `ADMIN_ALLOW_TOKEN_AUTH` | elevation | `true` accepts elevation with token authentication: the shared portal token becomes an elevation credential, there is no per-person allowlist or recent-login rule, and the sign-in link is available to any token holder. Default `false`, where elevation requires GitHub mode. |
+| `ADMIN_STARTUP_TIMEOUT_SECONDS` | elevation | How long activation waits for the admin workspace to become ready before revoking. |
+| `ADMIN_BOOTSTRAP` | controller | Explicit installer action: the controller verifies the predefined binding and Deployment at startup and refuses to run if they are missing or not the managed objects. |
+| `ADMIN_RECONCILE_SECONDS` / `ADMIN_HEALTH_ADDR` | controller | Reconciliation interval (default 5) and health endpoint (default `:8090`). |
 
 `PORTAL_ORIGIN` is canonicalized (lower-case host, default `:443` removed) so
 browser `Origin` headers match exactly.
@@ -166,6 +181,10 @@ save. Like provider keys, it applies when the agent restarts.
 | `GET` | `/api/github/repositories` | org-owner session | Catalog of repositories exposed by configured App installations. |
 | `POST` | `/api/github/repositories` | org-owner session + Origin | Save `{resourceVersion, repositories: ["owner/name"]}` to management policy Secret. Empty array denies all; conflicts return 409. |
 | `POST` | `/api/github/credentials` | workspace SA token (`pi-pocket-github` audience) | One-hour, repository-scoped App installation token (GitHub mode). |
+| `GET` | `/api/admin/status` | operator session | Elevation availability, caller capabilities, session, grant, workspace readiness, and observation freshness. Never contains a sign-in link or token. |
+| `POST` | `/api/admin/activate` | operator session + recent login + Origin | Bounded, justified activation. The server generates the session ID, approver identity, and expiry; the client supplies only reason, duration, and the `cluster-admin` confirmation. |
+| `POST` | `/api/admin/revoke` | operator session + Origin | Revocation. Deliberately exempt from the recent-login requirement. |
+| `POST` | `/api/admin/access` | operator session + recent login + Origin | Returns the active session's owner sign-in link, only to the operator who activated it, only while the state is fresh and the stored Pod UID matches the observed one. |
 | `GET` | `/` | none | Embedded SPA. |
 | `GET` | `/api/config` | bearer | Redacted config: `resourceVersion`, `allowedApiKeys`, `apiKeys` (name → set), `authorizedKeys`, `knownHosts`, `pocketUrl`, `ownerLoginUrl` (empty until the agent syncs it), `webSearch` (or `null`). |
 | `POST` | `/api/config` | bearer | Partial update, see below. |

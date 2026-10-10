@@ -216,3 +216,139 @@ Non-text bodies (images, PDFs, archives) are reported by content type and size
 instead of returned: no decoding is claimed for a format the module does not
 understand. `robots.txt` is not consulted — this is the same GET the shell could
 make, and it identifies itself with a plain `pi-pocket-web-fetch` user agent.
+
+## Cluster-admin elevation: a separate workspace behind a durable session (2026-10-10)
+
+The feature implements the plan in `docs/cluster-admin-workspace-plan.md`. The
+decisions worth recording, and the evidence behind them:
+
+**Elevation is a second Helm release, not a change to the normal one.** The
+normal workspace keeps its namespace permissions, PVC, and home. The admin
+release renders `replicas: 0` with `emptyDir` storage, so an idle installation
+has no admin Pod and no persisted admin state. Reusing the chart preserved the
+existing entrypoint, single-writer rules, services, ingress handling, and SCC
+helpers instead of duplicating them.
+
+**The grant is one predefined inert binding.** Kubernetes cannot restrict
+top-level `create` by `resourceNames`, so a controller that created arbitrary
+ClusterRoleBindings would need broader authority than the task requires. A
+binding that always exists with `subjects: []` lets the controller hold named
+`get`/`patch` plus `bind` on the one referenced role. The controller refuses to
+mutate a binding whose `roleRef` or subjects are not the managed ones, so a name
+collision with an unrelated object fails instead of being adopted. This is still
+a cluster-admin-equivalent authority: the operator must treat the controller as
+such, which the runbook states plainly.
+
+**RBAC is split by scope.** A single ClusterRole bound cluster-wide would have
+granted `get`/`list` on every Pod in the cluster and named access to
+deployments and Secrets in any namespace. Instead the ClusterRole holds only the
+two cluster-scoped rules; the Pod, Deployment, and runtime-Secret rules live in a
+Role in the admin namespace, and the session-Secret rule in a Role in the
+management namespace. Chart tests assert the split and that no rule uses a
+wildcard.
+
+**Desired and observed state are separate fields in one durable record.** The
+record stores the approval (who, why, until when) and the observations (phase,
+grant observed, Pod UID, readiness, last reconcile, failure code). The portal
+writes approvals; the controller writes observations; both use the Secret's
+`resourceVersion`, so a concurrent write is rejected rather than overwritten. A
+valid approval is never treated as proof that a grant exists.
+
+**Expiry is enforced by the controller on every pass, before anything else.**
+Reconciliation re-reads the deadline after a restart, never resets or extends it,
+revokes expired sessions before considering new work, and refuses new sessions
+while cleanup is incomplete. Startup waits re-read the durable record so a
+revocation during activation wins.
+
+**Cleanup attempts every step even when one fails.** Removing the grant, scaling
+the workspace to zero, and clearing the published sign-in metadata are attempted
+independently; any remaining problem moves the session to `CleanupRequired` with
+a fixed failure code, and the phase only becomes `Idle` once cleanup is
+confirmed. The UI reports that state instead of a green "off".
+
+**The sign-in link is Pod-bound.** The entrypoint publishes `owner-login-url`
+together with `owner-login-pod-uid`. The portal returns the link only to the
+operator who owns the session, only while the record is fresh and active, only
+when the stored UID equals the observed Pod UID, and only when the URL's origin
+matches the configured admin workspace. A replaced Pod therefore cannot serve a
+stale link, and the link never appears in `/api/config`, logs, or the session
+record.
+
+**Token-mode elevation is an explicit, documented opt-in.** The first release
+refused elevation in token authentication mode, because a namespace-admin
+workspace can read the portal token Secret and that credential must not become
+an elevation credential. Lab and test deployments still need to exercise the
+lifecycle without a browser OAuth round-trip, so `adminElevation.allowTokenAuth`
+(default `false`) permits it deliberately: the shared token becomes an elevation
+credential, sessions record a `token-operator` approver with no numeric ID, and
+the Pod-bound sign-in link is available to any token holder. Both layers enforce
+it — the chart fails the render and the portal refuses the request — and the
+default configuration is unchanged.
+
+**Authorization is numeric and recent.** Operators are listed by numeric GitHub
+user ID, because logins can be renamed and reused; organization ownership alone
+is not authorization to administer the cluster. Activation and link retrieval
+require a recent sign-in, which a long-lived session does not satisfy (a
+membership re-check deliberately does not refresh it). Revocation is exempt so
+an emergency stop never depends on a new login flow. Token authentication is
+rejected outright: a namespace-admin workspace can read a token-mode portal
+credential, and that credential must never become an elevation credential.
+
+**Verification.** Offline tests cover the reconciliation matrix (grant applied
+but scaling fails, workspace never ready, expiry during startup, restart during
+activation, restart after the deadline, revocation during startup, malformed
+state, binding drift, grant-removal failure with a stopped workload, Pod-shutdown
+failure, stale Pod before activation, idle convergence, no activation during
+incomplete cleanup), activation bounds, the portal authorization matrix
+(anonymous, workspace token, non-operator member, non-owner operator, stale and
+malformed state, stale Pod UID, foreign link origin, expired session), and the
+recent-login rule. Chart tests render both profiles under Helm 3.19 and Helm 4
+and assert the scope-split RBAC, the inert binding, and the retained
+default-deny posture.
+
+**Live validation (2026-10-10, dedicated PR test namespaces).** The branch was
+built in-cluster from its commit and installed as three releases: the workspace
+(`pi-pocket-pr13`), the management release with elevation enabled
+(`pi-pocket-pr13-mgmt`), and the stopped admin release
+(`pi-pocket-pr13-admin`). Observed: idle state with an empty binding and no admin
+Pod; the normal workspace still refused cluster-scoped reads
+(`kubectl get nodes` → Forbidden, `can-i list nodes` → no); activation produced
+`Active` with exactly the configured subject and a Pod whose UID matched the
+published `owner-login-pod-uid`; the elevated workspace could list nodes and
+cluster-wide Secrets while the normal workspace still could not; revocation and a
+50-second expiry both converged to `Idle` with the grant, workspace, and published
+link removed; injecting a foreign subject into the managed binding produced
+`binding_not_owned`/`CleanupRequired` without the controller mutating the drifted
+object, and the runbook's manual `subjects: []` step converged it to `Idle`; a
+second session received a different owner token; and both a portal restart and a
+controller restart left the session `Active` with `expiresAt` unchanged.
+
+The browser GitHub OAuth click-through was not exercised live: the GitHub App's
+registered callback URL is bound to the production portal host, so a
+test-namespace portal origin cannot complete the exchange. That path is covered
+by the offline authorization matrix, and the controller/workspace path was
+validated live as described.
+
+**Second live round (token-mode opt-in, same day).** With
+`adminElevation.allowTokenAuth=true` the whole lifecycle was driven through the
+live portal HTTP API and then through the real SPA in a browser: status →
+activate → grant → elevated read → access link → revoke, plus UI-driven
+activation and revocation with the confirmation dialogs. Three defects were
+found only by doing that:
+
+1. The controller treated an approval without a numeric GitHub user ID as
+   malformed, so a token-mode activation was accepted by the portal and then
+   immediately revoked with `invalid_approval`. The record now carries
+   `approvedByKind` (`github` or `token`), and only a `token` kind may omit the
+   ID.
+2. Revocation returned `409`: the controller rewrites observation fields every
+   few seconds, so the `resourceVersion` a browser loaded from
+   `/api/admin/status` is stale within one reconcile pass. Both transitions now
+   run as a bounded compare-and-swap loop against freshly loaded state, and
+   revocation ignores the client's version entirely — an emergency stop must
+   never fail on a stale snapshot. The safety decision (no concurrent session,
+   cleanup complete, something to revoke) is made from live state, which is
+   stronger than version equality.
+3. The panel refreshed only on user action, so it could show a stale countdown,
+   a frozen "observed Ns ago", or a session another operator had already
+   revoked. It now re-reads status every ten seconds while the tab is open.
