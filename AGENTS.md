@@ -47,7 +47,8 @@ Two things that surprise people:
   absence). That is an environment artefact, not a regression — verify with
   `ls /var/run/secrets/kubernetes.io/serviceaccount/` before "fixing" it.
 
-Image builds are not part of `make test` and need network plus `podman`:
+Image builds are not part of `make test` and need network plus `podman` (CI builds
+and pushes them the same way):
 
 ```bash
 make image          # pi-pocket image (context is the repo root, not images/)
@@ -132,6 +133,10 @@ Never:
   how existing credentials survive an upgrade, and an offline render emits
   fresh defaults.
 - Edit `.github/workflows/**` to publish images or push from pull requests.
+- Pull a build or base image from Docker Hub. CI builds with podman and pulls only
+  from `registry.access.redhat.com` and `quay.io`; anonymous Docker Hub pull limits
+  have failed whole runs, which is why the Go build stages use `ubi10/go-toolset`
+  rather than `docker.io/library/golang`.
 
 ## Nested files
 

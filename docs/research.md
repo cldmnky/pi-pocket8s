@@ -146,3 +146,49 @@ requests, empty policy, changes visible without restart, revocation overriding
 cached credentials, malformed/unavailable policy, write conflicts, catalog
 pagination and installation owner validation. Helm 3.19 and Helm 4 rendering
 verify retained default-deny policy and management-only named-secret RBAC.
+
+## Podman in CI, and no Docker Hub (2026-10-10)
+
+The images workflow failed twice on 2026-10-09/10 before reaching a single build
+step: `docker.io/library/golang:1.24` answered `429 Too Many Requests` on a
+manifest HEAD, and a retry got `504 Gateway Timeout` from `auth.docker.io`. The
+same failure hit `pi-pocket-portal`, whose Containerfile was unchanged, and the
+build jobs never reached the extension or entrypoint checks — Docker Hub's
+anonymous limits for shared runner IPs, not the code.
+
+The fix is to remove Docker Hub from the build and use the tool the project
+already documents locally:
+
+- The workflow builds, pushes and merges with **podman** (`make image` and the
+  README publish steps use the same commands). The smoke test runs with
+  `podman run/exec/logs`; no docker daemon or buildx is involved.
+- The Go build stages come from `registry.access.redhat.com/ubi10/go-toolset`,
+  the RHEL 10.2 stream (Go 1.26.7) — the same toolchain the runtime image already
+  installs with `dnf install golang`, on the registry the base image comes from.
+  `go-toolset` runs as UID 1001, so the build stages write their binary to
+  `/tmp/out` instead of `/out`. The compiler moves from Go 1.24.6 to 1.26.7;
+  `go.mod` still declares 1.24 as its minimum.
+- Everything else is `registry.access.redhat.com` (UBI, UBI minimal) or
+  `quay.io` (the pushed images). A test in `images/` fails `make test` if a Docker Hub reference or a docker
+action comes back.
+
+Verified locally with podman 5.8.2 inside the workspace pod: both Go stages build
+from the new toolchain, an arm64 build produces a genuine aarch64 binary (podman
+passes `TARGETARCH` like buildx does), and `podman manifest create` +
+`podman manifest push --all=false` writes an index into a local registry that
+references both per-architecture images without re-uploading their layers
+(`--all`, the default, copies every blob again).
+
+The first CI run of this change then showed why emulation is the wrong tool here:
+with Ubuntu's `qemu-user-static` registration, the arm64 build died in the
+toolchain step (`aarch64-binfmt-P: Could not open '/lib/ld-linux-aarch64.so.1'`)
+— the same class of failure the old buildx jobs only avoided by pulling the
+`tonistiigi/binfmt` helper from Docker Hub. The arm64 legs therefore run on
+GitHub's native `ubuntu-24.04-arm` runners (free for public repositories), one
+runner per architecture: no QEMU, no binfmt registration, no emulated `RUN`
+steps, and arm64 builds as fast as amd64.
+
+One consequence, deliberate: there is no shared build cache. Buildx's `type=gha`
+cache has no podman equivalent on the runners, and a registry cache would mean
+pushing cache images from pull requests, so each build starts from the base
+image.
