@@ -167,9 +167,6 @@ func (r *Reconciler) ensureIdle(ctx context.Context, state State, record Record)
 		clean = false
 	}
 	if clean {
-		if record.FailureCode != "" {
-			r.log.Info("cluster-admin cleanup completed", "failure", record.FailureCode)
-		}
 		return nil
 	}
 	r.log.Warn("idle admin workspace was not clean; converging to stopped state", "session", record.SessionID)
@@ -191,7 +188,10 @@ func (r *Reconciler) recoverInvalidState(ctx context.Context, state State) error
 
 func (r *Reconciler) activate(ctx context.Context, state State, record Record) error {
 	now := r.now()
-	if record.SessionID == "" || record.ApprovedByUserID <= 0 || strings.TrimSpace(record.Reason) == "" || record.ExpiresAt.IsZero() {
+	// A token-mode approval is identified by its kind, not by a numeric GitHub
+	// ID; anything else without an ID is malformed.
+	approverKnown := record.ApprovedByUserID > 0 || record.ApprovedByKind == ApprovedByToken
+	if record.SessionID == "" || !approverKnown || strings.TrimSpace(record.Reason) == "" || record.ExpiresAt.IsZero() {
 		record.FailureCode = FailureInvalidApproval
 		return r.revoke(ctx, state, record, FailureInvalidApproval)
 	}

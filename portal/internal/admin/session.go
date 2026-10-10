@@ -61,6 +61,14 @@ const (
 // ReasonLimit bounds the justification stored with a session.
 const ReasonLimit = 500
 
+// Approver kinds record how the approver was identified. Token-mode approvals
+// have no numeric GitHub ID, so the controller must not treat that absence as a
+// malformed approval.
+const (
+	ApprovedByGitHub = "github"
+	ApprovedByToken  = "token"
+)
+
 // Record is the durable session record. It never contains a Kubernetes token,
 // an owner sign-in URL, or any other credential.
 type Record struct {
@@ -68,6 +76,7 @@ type Record struct {
 	RequestedState     RequestedState `json:"requestedState,omitempty"`
 	ApprovedByUserID   int64          `json:"approvedByUserID,omitempty"`
 	ApprovedByLogin    string         `json:"approvedByLogin,omitempty"`
+	ApprovedByKind     string         `json:"approvedByKind,omitempty"`
 	Reason             string         `json:"reason,omitempty"`
 	ApprovedAt         time.Time      `json:"approvedAt,omitempty"`
 	ExpiresAt          time.Time      `json:"expiresAt,omitempty"`
@@ -163,11 +172,16 @@ func ValidateActivation(state State, request ActivationRequest, defaultDuration,
 		}
 		return Record{}, ErrSessionActive
 	}
+	kind := ApprovedByGitHub
+	if request.TokenOperator {
+		kind = ApprovedByToken
+	}
 	return Record{
 		SessionID:        request.SessionID,
 		RequestedState:   RequestedActive,
 		ApprovedByUserID: request.ApprovedByUserID,
 		ApprovedByLogin:  strings.TrimSpace(request.ApprovedByLogin),
+		ApprovedByKind:   kind,
 		Reason:           reason,
 		ApprovedAt:       now.UTC(),
 		ExpiresAt:        now.Add(request.Duration).UTC(),

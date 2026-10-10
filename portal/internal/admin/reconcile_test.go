@@ -569,6 +569,34 @@ func TestTokenOperatorApprovalIsExplicit(t *testing.T) {
 	}
 }
 
+func TestTokenKindApprovalActivates(t *testing.T) {
+	f := newFixture(t, time.Second)
+	// A token-mode approval has no numeric GitHub ID but is not malformed: the
+	// approver kind says how the identity was established.
+	f.store.set(Record{
+		SessionID: "token-session", RequestedState: RequestedActive, ApprovedByKind: ApprovedByToken,
+		ApprovedByLogin: "token-operator", Reason: "lab activation",
+		ApprovedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute), ObservedPhase: PhaseActivationRequested,
+	})
+	record := mustReconcile(t, f)
+	if record.ObservedPhase != PhaseActive || record.FailureCode != "" {
+		t.Fatalf("token approval did not activate: %s", record.Describe())
+	}
+	if record.ApprovedByKind != ApprovedByToken {
+		t.Fatalf("approver kind lost: %s", record.Describe())
+	}
+	// An identity-less approval without the token kind is still refused.
+	f2 := newFixture(t, time.Second)
+	f2.store.set(Record{
+		SessionID: "bad-session", RequestedState: RequestedActive, ApprovedByLogin: "nobody",
+		Reason: "no kind", ApprovedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute),
+		ObservedPhase: PhaseActivationRequested,
+	})
+	if final := mustReconcile(t, f2); final.FailureCode != FailureInvalidApproval {
+		t.Fatalf("identity-less approval accepted: %s", final.Describe())
+	}
+}
+
 func TestRequestRevocationNeedsNoRecentLogin(t *testing.T) {
 	state := State{Record: Record{ObservedPhase: PhaseActive, SessionID: "s"}}
 	record, err := RequestRevocation(state, time.Now())
