@@ -22,6 +22,7 @@
     adminEnabled: false,
     adminAccessUrl: '',
     adminTimer: null,
+    adminRefresh: null,
     busy: false
   };
 
@@ -139,6 +140,7 @@
     state.running = null;
     state.ownerLoginUrl = '';
     stopAdminTimer();
+    stopAdminRefresh();
     clearAdminAccess();
     state.adminStatus = null;
     state.adminEnabled = false;
@@ -172,6 +174,11 @@
     elements['panel-configure'].setAttribute('aria-hidden', configure ? 'false' : 'true');
     elements['panel-admin'].hidden = !admin;
     elements['panel-admin'].setAttribute('aria-hidden', admin ? 'false' : 'true');
+    if (admin) {
+      startAdminRefresh();
+    } else {
+      stopAdminRefresh();
+    }
   }
 
   // Draw the owner sign-in link as a QR code. qrcodegen is a vendored,
@@ -728,6 +735,33 @@
     }, 1000);
   }
 
+  // The controller rewrites its observations every few seconds, and the session
+  // can expire or be revoked by another operator at any time. A panel that only
+  // refreshed on user action would show a stale countdown and stale state, so
+  // the status is re-read while the panel is open.
+  var ADMIN_REFRESH_MS = 10000;
+
+  function stopAdminRefresh() {
+    if (state.adminRefresh !== null) {
+      clearInterval(state.adminRefresh);
+      state.adminRefresh = null;
+    }
+  }
+
+  function startAdminRefresh() {
+    stopAdminRefresh();
+    if (state.adminEnabled !== true) {
+      return;
+    }
+    state.adminRefresh = setInterval(function () {
+      loadAdmin();
+    }, ADMIN_REFRESH_MS);
+  }
+
+  function adminPanelVisible() {
+    return state.adminEnabled === true && elements['panel-admin'].hidden !== true;
+  }
+
   function clearAdminAccess() {
     state.adminAccessUrl = '';
     elements['admin-access-url'].value = '';
@@ -826,6 +860,7 @@
     elements['tab-admin'].hidden = !enabled;
     if (!enabled) {
       stopAdminTimer();
+      stopAdminRefresh();
       clearAdminAccess();
       elements['panel-admin'].hidden = true;
       elements['panel-admin'].setAttribute('aria-hidden', 'true');

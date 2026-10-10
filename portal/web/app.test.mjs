@@ -5,6 +5,18 @@ import { readFileSync } from 'node:fs';
 // Every static element dereferenced through the cache must be registered AND
 // exist in the embedded page. This catches post-login render failures like the
 // missing web-search input cache entries without a browser dependency.
+test('the admin panel refreshes itself while it is open', () => {
+  const js = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
+  // A panel that only refreshed on user action would show a stale countdown and
+  // stale session state; the controller rewrites observations continuously.
+  assert.match(js, /var ADMIN_REFRESH_MS = \d+;/);
+  assert.match(js, /function startAdminRefresh\(\)/);
+  assert.match(js, /function stopAdminRefresh\(\)/);
+  assert.match(js, /state\.adminRefresh = setInterval/);
+  assert.match(js, /stopAdminRefresh\(\);\n    clearAdminAccess\(\);/);
+  assert.match(js, /if \(admin\) \{\n      startAdminRefresh\(\);/);
+});
+
 test('all cached UI elements are registered and present', () => {
   const js = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
   const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
