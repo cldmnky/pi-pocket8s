@@ -83,7 +83,8 @@ prepare_directories() {
 # supporting OpenAI strict-mode tools, but the gateway's upstream rejects Pi's tool schemas in
 # strict mode, so every tool-using request to kimi-k3 fails with HTTP 400. Turning the flag off for
 # that model is the difference between an architect subagent that works and one that silently fails.
-# Pi reads models.json once, at startup, so this has to be in place before the app starts.
+# Pi reads models.json before the app starts (0.17.0's Refresh models re-reads the same file later), so
+# the override has to be in place before start.
 #
 # A workspace without the file gets the shipped copy. One that already has a models.json is merged
 # instead: the override is added only where it is missing, other keys are left alone, and a file that
@@ -344,6 +345,142 @@ sync_owner_url() {
     fi
 }
 
+# 0.17.0 adds an owner allow-list for subagent models (config.json subagentModels, empty by default):
+# a spawn may run on the session's own model or on one of that list, and nothing else. The shipped
+# types pin opencode-go models, so a fresh workspace would refuse architect/coder/reviewer. Allow
+# them through the app's own API — never by editing config.json — once per model: the marker records
+# what was seeded, so a model the owner later stops allowing in the Providers sheet stays stopped.
+# Delete the marker to seed the shipped models again. 0.17.0 writes config.json and listens before
+# its request handler is ready, answering 503 until then, so retry on 5xx and on no answer alike,
+# for one bounded minute shared by every model; this never fails boot.
+seed_subagent_models() {
+    local launcher="${1:-}"
+    local src="${PI_AGENT_SOURCE:-/usr/share/pi-agent}/agents"
+    local marker="${DATA_DIR}/.subagent-models-seeded"
+    local config="${DATA_DIR}/config.json"
+    local port="${PI_POCKET_PORT:-8787}"
+    local token file model line body status response message
+    local -a wanted=() seeded=() missing=()
+    local -A seen=() marked=()
+    # One deadline for the whole function, not one per model.
+    local retry_until=$((SECONDS + 60))
+
+    if [ ! -r "${config}" ]; then
+        warn "no ${config}; cannot seed subagent models"
+        return 0
+    fi
+    token="$(jq -r '.ownerToken // empty' "${config}" 2>/dev/null)" || token=""
+    if [ -z "${token}" ]; then
+        warn "could not read ownerToken from ${config}; cannot seed subagent models"
+        return 0
+    fi
+
+    # The models the shipped types name, in the order the files are read: first `model:` line only.
+    for file in "${src}"/*.md; do
+        if [ ! -r "${file}" ]; then
+            continue
+        fi
+        case "$(basename "${file}")" in
+            _*) continue ;;
+        esac
+        # No pipe: a second `model:` line must not SIGPIPE the reader and kill PID 1.
+        model="$(sed -n '/^model: / { s/^model:  *//; p; q; }' "${file}")" || model=""
+        if [ -n "${model}" ] && [ -z "${seen["${model}"]:-}" ]; then
+            seen["${model}"]=1
+            wanted+=("${model}")
+        fi
+    done
+    if [ "${#wanted[@]}" -eq 0 ]; then
+        warn "no subagent type models found in ${src}; nothing to allow"
+        return 0
+    fi
+
+    if [ -r "${marker}" ]; then
+        while IFS= read -r line; do
+            line="${line#"${line%%[![:space:]]*}"}"
+            line="${line%"${line##*[![:space:]]}"}"
+            if [ -n "${line}" ] && [ -z "${marked["${line}"]:-}" ]; then
+                marked["${line}"]=1
+                seeded+=("${line}")
+            fi
+        done < "${marker}"
+    fi
+
+    for model in "${wanted[@]}"; do
+        if [ -z "${marked["${model}"]:-}" ]; then
+            missing+=("${model}")
+        fi
+    done
+    if [ "${#missing[@]}" -eq 0 ]; then
+        return 0
+    fi
+
+    for model in "${missing[@]}"; do
+        body="$(jq -nc --arg model "${model}" '{model: $model, allowed: true}' 2>/dev/null)" || body=""
+        if [ -z "${body}" ]; then
+            warn "could not encode an allow request for ${model}"
+            continue
+        fi
+        response="$(mktemp "${TMPDIR:-/tmp}/pocket-subagent-models.XXXXXX" 2>/dev/null)" || response=""
+        if [ -z "${response}" ]; then
+            warn "cannot create a temporary file to seed subagent models"
+            return 0
+        fi
+        while :; do
+            if status="$(curl -sS --max-time 10 -o "${response}" -w '%{http_code}' \
+                    -H "Authorization: Bearer ${token}" \
+                    -H 'Content-Type: application/json' \
+                    -H 'X-Pocket: 1' \
+                    -X POST --data "${body}" \
+                    "http://127.0.0.1:${port}/api/subagent-models" 2>/dev/null)"; then
+                :
+            else
+                status=""
+            fi
+
+            case "${status}" in
+                200)
+                    log "allowed ${model} for subagents"
+                    if [ -z "${marked["${model}"]:-}" ]; then
+                        marked["${model}"]=1
+                        seeded+=("${model}")
+                    fi
+                    break
+                    ;;
+                4??)
+                    message="$(jq -r '.error // empty' "${response}" 2>/dev/null)" || message=""
+                    warn "could not allow ${model} for subagents: ${message:-status ${status}}"
+                    break
+                    ;;
+                ""|000|5??)
+                    # The launcher answers 503 while it opens; unreachable or not ready is retryable.
+                    if [ -n "${launcher}" ] && ! kill -0 "${launcher}" 2>/dev/null; then
+                        warn "the launcher exited; subagent models were not seeded"
+                        rm -f "${response}"
+                        return 0
+                    fi
+                    if [ "${SECONDS}" -ge "${retry_until}" ]; then
+                        warn "the server on 127.0.0.1:${port} was not ready (status ${status:-none}); subagent models were not seeded"
+                        rm -f "${response}"
+                        return 0
+                    fi
+                    sleep 2
+                    ;;
+                *)
+                    warn "could not allow ${model} for subagents (status ${status})"
+                    break
+                    ;;
+            esac
+        done
+        rm -f "${response}"
+    done
+
+    if [ "${#seeded[@]}" -gt 0 ]; then
+        printf '%s\n' "${seeded[@]}" > "${marker}.tmp" && mv "${marker}.tmp" "${marker}" \
+            || warn "could not record seeded subagent models in ${marker}"
+    fi
+}
+
 # Remove a stale single-writer lock. Upstream refuses to start when
 # <data>/harness.lock exists, and the lock survives pod restarts on the
 # persistent volume. A lock whose pid is dead (always the case in a fresh
@@ -410,6 +547,10 @@ launch() {
         waited=$((waited + 1))
     done
     sync_owner_url
+    # No point waiting on a server that already exited: boot continues to report its code.
+    if kill -0 "${child}" 2>/dev/null; then
+        seed_subagent_models "${child}"
+    fi
     # Supervise both processes: the launcher owns the exit code, while a
     # crashed terminal daemon is restarted (it holds no state worth keeping).
     while true; do

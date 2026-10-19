@@ -182,13 +182,38 @@ jobs:
 
           # The owner sign-in token and its QR code must not reach the container log;
           # the token itself stays in config.json (never printed by this job). The
-          # log is captured once: piping into `grep -q` can kill `podman logs` with
-          # SIGPIPE (141) under pipefail, and with an early match would also make
-          # the leak check below a silent no-op.
+          # log is captured whole each time: piping into `grep -q` can kill `podman
+          # logs` with SIGPIPE (141) under pipefail, and with an early match would
+          # also make the leak check below a silent no-op.
           logs="$(sudo podman logs smoke 2>&1)"
           token="$(sudo podman exec smoke node -e 'const { ownerToken } = require("/workspace/home/.pi-pocket/config.json"); process.stdout.write(ownerToken)')"
           if [ -z "${token}" ]; then
             echo "::error::could not read the owner token from config.json"
+            exit 1
+          fi
+
+          # 0.17.0 lets a subagent run only on its session's model or one the owner allowed for
+          # subagents. The entrypoint seeds the shipped types' models through the app's API, which
+          # may answer 503 for a moment after readiness, so poll both config.json and the log for 30
+          # turns. The assertion still requires all three models and all three grant lines.
+          seeded=0
+          for _ in $(seq 1 30); do
+            logs="$(sudo podman logs smoke 2>&1)"
+            if sudo podman exec smoke jq -e '(.subagentModels // []) as $allowed
+                | ["opencode-go/kimi-k3", "opencode-go/deepseek-v4.1-flash", "opencode-go/glm-5.3"]
+                | map(. as $model | $allowed | index($model) != null) | all' \
+                /workspace/home/.pi-pocket/config.json >/dev/null 2>&1 \
+              && grep -qF 'allowed opencode-go/kimi-k3 for subagents' <<<"${logs}" \
+              && grep -qF 'allowed opencode-go/deepseek-v4.1-flash for subagents' <<<"${logs}" \
+              && grep -qF 'allowed opencode-go/glm-5.3 for subagents' <<<"${logs}"; then
+              seeded=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "${seeded}" != "1" ]; then
+            sudo podman exec smoke jq '.subagentModels // []' /workspace/home/.pi-pocket/config.json || true
+            echo "::error::the entrypoint did not allow the shipped subagent models"
             exit 1
           fi
           if grep -qF "${token}" <<<"${logs}"; then
@@ -261,15 +286,16 @@ jobs:
           sudo podman exec smoke rpm -q libsndfile
           sudo podman exec smoke sh -c 'ldconfig -p | grep -q libsndfile'
 
-          # The kimi-k3 strict-mode fix the image ships: Pi reads models.json once, at startup, so a
-          # workspace without it sends strict-mode tool schemas to a gateway that rejects them, and
-          # every tool-using request to that model fails with HTTP 400.
+          # The kimi-k3 strict-mode fix the image ships: the merge happens before the app starts, so
+          # a workspace without it sends strict-mode tool schemas to a gateway that rejects them, and
+          # every tool-using request to that model fails with HTTP 400. 0.17.0's Refresh models
+          # re-reads the same seeded file.
           sudo podman exec smoke test -f /workspace/home/.pi/agent/models.json
           sudo podman exec smoke jq -e '.providers["opencode-go"].modelOverrides["kimi-k3"].compat.supportsStrictMode == false' /workspace/home/.pi/agent/models.json
 
-          # The subagent machinery the pinned upstream ships: 0.12.2 delivers a failed subagent's run
+          # The subagent machinery the pinned upstream ships: a failed subagent's run is delivered
           # as a report through the courier instead of leaving the parent waiting for good. Assert the
-          # task the fix introduced is in the source the image runs.
+          # task is still in the source the image runs.
           sudo podman exec smoke grep -q 'pocket.subagent-courier' /opt/pi-pocket/src/server/extensions/subagents.ts
 
           # Node 24 with its built-in SQLite, plus the upstream runtime dependencies.
