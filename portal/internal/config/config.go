@@ -34,6 +34,7 @@ type Config struct {
 	AuthMode                string
 	WorkspaceServiceAccount string
 	GitHub                  githubapp.Options
+	Admin                   AdminConfig
 }
 
 var dnsLabelRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -97,6 +98,11 @@ func FromEnv() (Config, error) {
 	if cfg.TokenFile == "" {
 		cfg.TokenFile = DefaultTokenFile
 	}
+	adminCfg, err := adminFromEnv()
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Admin = adminCfg
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -116,6 +122,9 @@ func (c *Config) Validate() error {
 	}
 	if c.AuthMode == "github" && (!isDNSLabel(c.PortalNamespace) || c.PortalNamespace == c.Namespace) {
 		return fmt.Errorf("GitHub portal must run outside the workspace namespace")
+	}
+	if err := c.Admin.validate(c); err != nil {
+		return err
 	}
 	if !isDNSLabel(c.Namespace) {
 		return fmt.Errorf("POD_NAMESPACE %q is not a valid Kubernetes namespace", c.Namespace)

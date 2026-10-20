@@ -59,6 +59,10 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST /auth/logout", s.sessions.Logout)
 		mux.HandleFunc("POST /api/github/credentials", s.handleGitHubCredentials)
 	}
+	mux.Handle("GET /api/admin/status", s.api(s.handleAdminStatus))
+	mux.Handle("POST /api/admin/activate", s.api(s.handleAdminActivate))
+	mux.Handle("POST /api/admin/revoke", s.api(s.handleAdminRevoke))
+	mux.Handle("POST /api/admin/access", s.api(s.handleAdminAccess))
 	mux.Handle("GET /api/config", s.api(s.handleGetConfig))
 	mux.Handle("POST /api/config", s.api(s.handlePostConfig))
 	mux.Handle("GET /api/status", s.api(s.handleStatus))

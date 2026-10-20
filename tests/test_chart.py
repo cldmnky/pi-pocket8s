@@ -24,6 +24,46 @@ def find(objects, kind, name):
     return next(obj for obj in objects if obj["kind"] == kind and obj["metadata"]["name"] == name)
 
 
+def render_profile(values_file, namespace, *options):
+    result = subprocess.run(
+        ["helm", "template", "pi-pocket", str(ROOT / "charts/pi-pocket"),
+         "-n", namespace, "-f", str(ROOT / values_file), *options],
+        capture_output=True, text=True, check=True,
+    )
+    return [item for item in yaml.safe_load_all(result.stdout) if item]
+
+
+# GitHub-auth portal in a separate management namespace: the prerequisite for
+# every adminElevation render.
+GITHUB_MODE_OPTIONS = [
+    "--set", "portal.namespace=management", "--set", "portal.authMode=github",
+    "--set", "portal.github.clientID=client", "--set", "portal.github.appID=123",
+    "--set", "portal.github.installationID=456", "--set", "portal.github.organization=example",
+    "--set", "portal.github.existingSecret=github-app",
+]
+
+# A valid elevation target, minus the operator allowlist so a test can prove the
+# empty-allowlist rule fires before operators are supplied.
+ELEVATION_TARGET_OPTIONS = GITHUB_MODE_OPTIONS + [
+    "--set", "adminElevation.enabled=true", "--set", "adminElevation.bootstrap=true",
+    "--set", "adminElevation.namespace=pi-pocket-admin",
+    "--set", "adminElevation.deployment=pi-pocket-admin",
+    "--set", "adminElevation.serviceAccount=pi-pocket-admin",
+    "--set", "adminElevation.runtimeSecret=pi-pocket-admin-runtime",
+    "--set", "adminElevation.pocketURL=https://pocket-admin.apps.voyager.blahonga.me",
+    "--set", "adminElevation.terminalURL=https://pocket-admin-terminal.apps.voyager.blahonga.me",
+]
+
+ELEVATION_OPTIONS = ELEVATION_TARGET_OPTIONS + [
+    "--set", "adminElevation.operators[0]=12345", "--set", "adminElevation.operators[1]=67890",
+]
+
+
+def rbac_rules(docs):
+    """Every Role/ClusterRole rule in a render, as a flat list."""
+    return [rule for obj in docs if obj["kind"] in ("Role", "ClusterRole") for rule in obj["rules"]]
+
+
 class ChartTests(unittest.TestCase):
     def test_default_usernamespaces_and_sqlite_single_writer(self):
         docs = render()
@@ -200,6 +240,226 @@ class ChartTests(unittest.TestCase):
             with self.subTest(extra=extra), self.assertRaises(subprocess.CalledProcessError):
                 render(*options, *extra)
 
+    def test_admin_elevation_disabled_adds_no_privilege(self):
+        """Elevation off (the default) renders no admin object and no new grant."""
+        docs = render()
+        self.assertFalse(any("admin" in obj["metadata"]["name"] for obj in docs))
+        self.assertEqual([obj["kind"] for obj in docs if obj["kind"] == "ClusterRoleBinding"], [])
+        for rule in rbac_rules(docs):
+            self.assertNotIn("*", rule["resources"])
+            self.assertNotIn("*", rule["verbs"])
+            self.assertNotIn("*", rule["apiGroups"])
+        portal = find(docs, "Deployment", "pi-pocket-portal")["spec"]["template"]["spec"]
+        env = {item["name"] for item in portal["containers"][0]["env"]}
+        self.assertFalse(any(name.startswith("ADMIN_") for name in env))
+
+    def test_admin_workspace_profile_is_stopped_and_ephemeral(self):
+        """deploy/admin-workspace-values.yaml: replicas 0, emptyDir only, no admin grant."""
+        docs = render_profile("deploy/admin-workspace-values.yaml", "pi-pocket-admin")
+        deployment = find(docs, "Deployment", "pi-pocket-admin")
+        self.assertEqual(deployment["spec"]["replicas"], 0)
+        self.assertEqual(deployment["spec"]["strategy"]["type"], "Recreate")
+        pod = deployment["spec"]["template"]["spec"]
+        self.assertIs(pod["hostUsers"], False)
+        mounts = {item["name"]: item["mountPath"] for item in pod["containers"][0]["volumeMounts"]}
+        self.assertEqual(mounts["workspace-home"], "/workspace/home")
+        self.assertEqual(mounts["workspace-repos"], "/workspace/repos")
+        self.assertNotIn("workspace", mounts)
+        volumes = {item["name"]: item for item in pod["volumes"]}
+        self.assertIn("emptyDir", volumes["workspace-home"])
+        self.assertIn("emptyDir", volumes["workspace-repos"])
+        self.assertFalse(any("persistentVolumeClaim" in item for item in pod["volumes"]))
+        self.assertFalse(any(obj["kind"] == "PersistentVolumeClaim" for obj in docs))
+        self.assertFalse(any(obj["kind"] == "RoleBinding" and obj["metadata"]["name"] == "pi-pocket-admin-namespace"
+                             for obj in docs))
+        self.assertFalse(any(obj["kind"] in ("Deployment", "ServiceAccount", "Service", "Secret")
+                             and "portal" in obj["metadata"]["name"] for obj in docs))
+        self.assertFalse(any(obj["kind"] in ("RoleBinding", "ClusterRoleBinding")
+                             and obj["roleRef"]["name"] == "cluster-admin" for obj in docs))
+
+    def test_admin_elevation_renders_controller_and_split_rbac(self):
+        """Elevation on: controller, scope-split RBAC, retained session Secret, inert binding."""
+        docs = render(*ELEVATION_OPTIONS)
+        controller = find(docs, "Deployment", "pi-pocket-admin-controller")
+        self.assertEqual(controller["metadata"]["namespace"], "management")
+        self.assertEqual(controller["spec"]["replicas"], 1)
+        self.assertEqual(controller["spec"]["strategy"]["type"], "Recreate")
+        pod = controller["spec"]["template"]["spec"]
+        self.assertIs(pod["hostUsers"], False)
+        self.assertFalse(pod["containers"][0]["securityContext"]["allowPrivilegeEscalation"])
+        self.assertTrue(pod["containers"][0]["securityContext"]["readOnlyRootFilesystem"])
+        self.assertEqual(pod["containers"][0]["securityContext"]["capabilities"]["drop"], ["ALL"])
+        self.assertEqual(find(docs, "ServiceAccount", "pi-pocket-admin-controller")["metadata"]["namespace"], "management")
+        container = controller["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual(container["command"], ["/usr/local/bin/admin-controller"])
+        self.assertEqual(container["ports"], [{"name": "health", "containerPort": 8090}])
+        self.assertEqual(container["readinessProbe"], {"httpGet": {"path": "/healthz", "port": "health"}})
+        self.assertEqual(container["livenessProbe"], {"httpGet": {"path": "/healthz", "port": "health"}})
+        self.assertIn({"name": "tmp", "mountPath": "/tmp"}, container["volumeMounts"])
+        env = {item["name"]: item.get("value") for item in container["env"]}
+        self.assertEqual(env["ADMIN_OPERATORS"], "12345,67890")
+        self.assertEqual(env["ADMIN_HEALTH_ADDR"], ":8090")
+        self.assertEqual(env["ADMIN_BOOTSTRAP"], "true")
+        self.assertEqual(env["ADMIN_RECONCILE_SECONDS"], "5")
+        self.assertEqual(container["env"][0]["valueFrom"]["fieldRef"]["fieldPath"], "metadata.namespace")
+
+        # The controller ClusterRole is cluster-scoped only: no Pod, Deployment or
+        # Secret rule, so it never gets cluster-wide read of those.
+        cluster_role = find(docs, "ClusterRole", "pi-pocket-admin-controller")
+        resources = {res for rule in cluster_role["rules"] for res in rule["resources"]}
+        self.assertEqual(resources, {"clusterrolebindings", "clusterroles"})
+        self.assertEqual(cluster_role["rules"][0]["resourceNames"], ["pi-pocket-admin-cluster-admin"])
+        self.assertEqual(cluster_role["rules"][1]["resourceNames"], ["cluster-admin"])
+        self.assertEqual(cluster_role["rules"][1]["verbs"], ["bind"])
+        find(docs, "ClusterRoleBinding", "pi-pocket-admin-controller")
+
+        # Namespaced authority is scoped by Role + RoleBinding in each namespace.
+        role = find(docs, "Role", "pi-pocket-admin-controller")
+        self.assertEqual(role["metadata"]["namespace"], "pi-pocket-admin")
+        by_resource = {rule["resources"][0]: rule for rule in role["rules"]}
+        self.assertEqual(by_resource["deployments"]["resourceNames"], ["pi-pocket-admin"])
+        self.assertEqual(by_resource["deployments"]["verbs"], ["get", "patch"])
+        self.assertEqual(by_resource["deployments/scale"]["resourceNames"], ["pi-pocket-admin"])
+        self.assertEqual(by_resource["deployments/scale"]["verbs"], ["get", "update"])
+        self.assertEqual(by_resource["pods"]["verbs"], ["get", "list"])
+        self.assertNotIn("resourceNames", by_resource["pods"])
+        self.assertEqual(by_resource["secrets"]["resourceNames"], ["pi-pocket-admin-runtime"])
+        session_role = find(docs, "Role", "pi-pocket-admin-controller-session")
+        self.assertEqual(session_role["metadata"]["namespace"], "management")
+        self.assertEqual(session_role["rules"], [{"apiGroups": [""], "resources": ["secrets"],
+                                                  "resourceNames": ["pi-pocket-admin-session"], "verbs": ["get", "patch"]}])
+
+        # Portal gets read-only access-data reads, never lifecycle authority.
+        portal_role = find(docs, "Role", "pi-pocket-portal-admin")
+        self.assertEqual(portal_role["metadata"]["namespace"], "pi-pocket-admin")
+        self.assertEqual(portal_role["rules"], [
+            {"apiGroups": ["apps"], "resources": ["deployments"],
+             "resourceNames": ["pi-pocket-admin"], "verbs": ["get"]},
+            {"apiGroups": [""], "resources": ["secrets"],
+             "resourceNames": ["pi-pocket-admin-runtime"], "verbs": ["get"]},
+        ])
+        portal_session = find(docs, "Role", "pi-pocket-portal-admin-session")
+        self.assertEqual(portal_session["metadata"]["namespace"], "management")
+        self.assertEqual(find(docs, "RoleBinding", "pi-pocket-portal-admin")["subjects"][0]["name"], "pi-pocket-portal")
+
+        # No rule anywhere may fall back to a wildcard resource or verb.
+        for rule in rbac_rules(docs):
+            self.assertNotIn("*", rule["resources"])
+            self.assertNotIn("*", rule["verbs"])
+            self.assertNotIn("*", rule["apiGroups"])
+
+        session = find(docs, "Secret", "pi-pocket-admin-session")
+        self.assertEqual(session["metadata"]["namespace"], "management")
+        self.assertEqual(session["metadata"]["annotations"]["helm.sh/resource-policy"], "keep")
+        self.assertEqual(session["data"]["session.json"], "e30=")  # {}
+        inert = find(docs, "ClusterRoleBinding", "pi-pocket-admin-cluster-admin")
+        self.assertEqual(inert["roleRef"], {"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "cluster-admin"})
+        self.assertEqual(inert["subjects"], [])
+
+        # The portal gets the admin configuration but never bootstrap/reconcile/health.
+        portal_container = find(docs, "Deployment", "pi-pocket-portal")["spec"]["template"]["spec"]["containers"][0]
+        portal_env = {item["name"]: item.get("value") for item in portal_container["env"]}
+        for name in ("ADMIN_NAMESPACE", "ADMIN_DEPLOYMENT", "ADMIN_SERVICE_ACCOUNT", "ADMIN_RUNTIME_SECRET",
+                     "ADMIN_POCKET_URL", "ADMIN_TERMINAL_URL", "ADMIN_SESSION_SECRET", "ADMIN_CLUSTER_ROLE_BINDING",
+                     "ADMIN_CLUSTER_ROLE", "ADMIN_OPERATORS", "ADMIN_DEFAULT_DURATION_SECONDS",
+                     "ADMIN_MAX_DURATION_SECONDS", "ADMIN_RECENT_LOGIN_SECONDS", "ADMIN_STARTUP_TIMEOUT_SECONDS"):
+            self.assertIn(name, portal_env)
+        for name in ("ADMIN_BOOTSTRAP", "ADMIN_RECONCILE_SECONDS", "ADMIN_HEALTH_ADDR"):
+            self.assertNotIn(name, portal_env)
+
+    def test_admin_elevation_validation_rejects_unsafe_combinations(self):
+        for options in (
+            ("--set", "adminElevation.bootstrap=true"),  # rule 5: bootstrap needs enabled
+        ):
+            with self.subTest(options=options), self.assertRaises(subprocess.CalledProcessError):
+                render(*options)
+        with self.subTest("empty operators"), self.assertRaises(subprocess.CalledProcessError):
+            render(*ELEVATION_TARGET_OPTIONS)
+        for options in (
+            ("--set", "workspace.mode=admin"),  # rule 7
+            ("--set", "portal.authMode=token"),  # rule 4: github only
+            ("--set", "adminElevation.bootstrap=false"),  # rule 4: bootstrap required
+            ("--set", "adminElevation.namespace="),  # rule 4: target required
+            ("--set", "adminElevation.deployment="),
+            ("--set", "adminElevation.serviceAccount="),
+            ("--set", "adminElevation.runtimeSecret="),
+            ("--set", "adminElevation.pocketURL="),
+            ("--set", "adminElevation.namespace=test-pocket"),  # rule 4: distinct namespaces
+            ("--set", "adminElevation.namespace=management"),
+            ("--set", "portal.namespace=test-pocket"),
+            ("--set", "adminElevation.defaultDurationSeconds=0"),  # rule 4: durations
+            ("--set", "adminElevation.defaultDurationSeconds=3600"),
+            ("--set", "adminElevation.maxDurationSeconds=3601"),
+            ("--set", "adminElevation.recentLoginSeconds=0"),
+            ("--set", "adminElevation.startupTimeoutSeconds=0"),
+            ("--set", "adminElevation.reconcileSeconds=0"),
+            ("--set", "adminElevation.operators[0]=0"),  # rule 4: numeric GitHub ids
+            ("--set", "adminElevation.operators[0]=-1"),
+            ("--set-string", "adminElevation.operators[0]=not-an-id"),
+            ("--set", "adminElevation.operators[0]=1.5"),
+        ):
+            with self.subTest(options=options), self.assertRaises(subprocess.CalledProcessError):
+                render(*ELEVATION_OPTIONS, *options)
+
+    def test_workspace_mode_validation_rejects_unsafe_combinations(self):
+        for options in (
+            ("--set", "workspace.mode=weird"),  # rule 1
+            ("--set", "persistence.mode=weird"),
+            ("--set", "persistence.mode=ephemeral", "--set", "persistence.existingClaim=reuse"),  # rule 3
+        ):
+            with self.subTest(options=options), self.assertRaises(subprocess.CalledProcessError):
+                render(*options)
+        for options in (
+            ("--set", "replicas=1"),  # rule 2
+            ("--set", "persistence.mode=pvc"),
+            ("--set", "serviceAccount.namespaceRole=admin"),
+            ("--set", "portal.enabled=true", "--set", "ingress.portalHost=portal.example.com"),
+            ("--set", "runtimeSecret.existingSecret=shared"),
+            ("--set", "ingress.pocketHost="),
+            ("--set", "adminElevation.enabled=true"),
+        ):
+            with self.subTest(options=options), self.assertRaises(subprocess.CalledProcessError):
+                render_profile("deploy/admin-workspace-values.yaml", "pi-pocket-admin", *options)
+
+    def test_normal_workspace_never_cluster_admin(self):
+        """No render gives the normal or admin workspace a populated cluster-admin grant."""
+        renders = [
+            render(),
+            render_profile("deploy/admin-workspace-values.yaml", "pi-pocket-admin"),
+            render(*ELEVATION_OPTIONS),
+        ]
+        for docs in renders:
+            for obj in docs:
+                if obj["kind"] not in ("RoleBinding", "ClusterRoleBinding"):
+                    continue
+                if obj["roleRef"]["name"] != "cluster-admin":
+                    continue
+                # Any cluster-admin binding must stay inert while idle: it never
+                # carries a subject, and never a workspace service account.
+                subjects = obj.get("subjects") or []
+                self.assertEqual(subjects, [])
+                names = [subject.get("name") for subject in subjects]
+                self.assertNotIn("pi-pocket", names)
+                self.assertNotIn("pi-pocket-admin", names)
+
+    def test_hostusers_and_single_writer_contracts_survive(self):
+        for docs, name, replicas in (
+            (render(), "pi-pocket", 1),
+            (render_profile("deploy/admin-workspace-values.yaml", "pi-pocket-admin"), "pi-pocket-admin", 0),
+            (render(*ELEVATION_OPTIONS), "pi-pocket", 1),
+        ):
+            deployment = find(docs, "Deployment", name)
+            pod = deployment["spec"]["template"]["spec"]
+            self.assertIs(pod["hostUsers"], False)
+            self.assertEqual(deployment["spec"]["strategy"]["type"], "Recreate")
+            self.assertEqual(deployment["spec"]["replicas"], replicas)
+            self.assertTrue(pod["securityContext"]["runAsNonRoot"])
+            self.assertEqual(pod["securityContext"]["runAsUser"], 1000)
+        controller = find(render(*ELEVATION_OPTIONS), "Deployment", "pi-pocket-admin-controller")
+        self.assertIs(controller["spec"]["template"]["spec"]["hostUsers"], False)
+        self.assertEqual(controller["spec"]["strategy"]["type"], "Recreate")
+        self.assertEqual(controller["spec"]["replicas"], 1)
+
     def test_chart_app_version_matches_the_pinned_upstream(self):
         """The chart's appVersion names the pi-pocket the image ships, so a bump cannot update one and miss the other."""
         chart = yaml.safe_load((ROOT / "charts/pi-pocket/Chart.yaml").read_text())
@@ -214,6 +474,35 @@ class ChartTests(unittest.TestCase):
             r"^[0-9a-f]{40}$",
             "pin a full commit sha: the build checks git rev-parse HEAD against it",
         )
+
+    def test_token_auth_elevation_requires_explicit_opt_in(self):
+        options = ["--set", "portal.namespace=management", "--set", "portal.github.clientID=client",
+                   "--set", "portal.github.appID=123", "--set", "portal.github.installationID=456",
+                   "--set", "portal.github.organization=blahonga", "--set", "portal.github.existingSecret=github-app",
+                   "--set", "adminElevation.enabled=true", "--set", "adminElevation.bootstrap=true",
+                   "--set", "adminElevation.namespace=admin-ns", "--set", "adminElevation.deployment=pi-pocket-admin",
+                   "--set", "adminElevation.serviceAccount=pi-pocket-admin",
+                   "--set", "adminElevation.runtimeSecret=pi-pocket-admin-runtime",
+                   "--set", "adminElevation.pocketURL=https://pocket-admin.example.com",
+                   "--set", "adminElevation.operators[0]=42"]
+        # Token authentication is refused unless the opt-in is explicit.
+        with self.assertRaises(subprocess.CalledProcessError):
+            render(*options, "--set", "portal.authMode=token")
+        docs = render(*options, "--set", "portal.authMode=token",
+                      "--set", "adminElevation.allowTokenAuth=true")
+        portal = find(docs, "Deployment", "pi-pocket-portal")["spec"]["template"]["spec"]
+        env = {item["name"]: item.get("value") for item in portal["containers"][0]["env"]}
+        self.assertEqual(env["PORTAL_AUTH_MODE"], "token")
+        self.assertEqual(env["ADMIN_ALLOW_TOKEN_AUTH"], "true")
+        # The controller never receives the portal's auth decision.
+        controller = find(docs, "Deployment", "pi-pocket-admin-controller")["spec"]["template"]["spec"]
+        controller_env = {item["name"]: item.get("value") for item in controller["containers"][0]["env"]}
+        self.assertNotIn("ADMIN_ALLOW_TOKEN_AUTH", controller_env)
+        # And the default stays fail-closed.
+        docs = render(*options, "--set", "portal.authMode=github")
+        portal = find(docs, "Deployment", "pi-pocket-portal")["spec"]["template"]["spec"]
+        env = {item["name"]: item.get("value") for item in portal["containers"][0]["env"]}
+        self.assertEqual(env["ADMIN_ALLOW_TOKEN_AUTH"], "false")
 
     def test_reject_unsafe_options(self):
         for options in (("replicas=2",), ("openshift.pocketSCC=privileged",), ("serviceAccount.namespaceRole=cluster-admin",), ("ingress.pocketHost=",), ("ingress.portalHost=",), ("ingress.enabled=false",)):

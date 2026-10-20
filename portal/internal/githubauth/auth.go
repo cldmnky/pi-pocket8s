@@ -24,6 +24,11 @@ const maxEntries = 4096
 
 var ErrUnauthorized = errors.New("GitHub session required")
 
+// ErrStaleLogin means the session is valid but its sign-in is too old for an
+// operation that requires a recent authentication (such as activating
+// cluster-admin).
+var ErrStaleLogin = errors.New("recent GitHub sign-in required")
+
 type Provider interface {
 	AuthorizationURL(callback, state, verifier string) string
 	Login(context.Context, string, string, string) (githubapp.User, error)
@@ -37,6 +42,10 @@ type pending struct {
 type session struct {
 	user             githubapp.User
 	expires, checked time.Time
+	// authenticatedAt is when this browser proved its identity. It is never
+	// refreshed by a membership re-check, so a recent sign-in requirement
+	// cannot be satisfied by simply holding a long-lived session.
+	authenticatedAt time.Time
 }
 type Auth struct {
 	provider Provider
@@ -147,7 +156,7 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 	if old, err := r.Cookie(SessionCookie); err == nil {
 		delete(a.sessions, key(old.Value))
 	}
-	a.sessions[key(token)] = session{user, a.now().Add(8 * time.Hour), a.now()}
+	a.sessions[key(token)] = session{user, a.now().Add(8 * time.Hour), a.now(), a.now()}
 	a.mu.Unlock()
 	a.log.Info("github oauth", "stage", "session", "outcome", "authenticated")
 	setCookie(w, SessionCookie, token, 8*60*60)
@@ -186,6 +195,30 @@ func (a *Auth) Authorize(r *http.Request) (githubapp.User, error) {
 		a.mu.Unlock()
 	}
 	return s.user, nil
+}
+
+// AuthorizeRecent behaves like Authorize but additionally requires that the
+// browser signed in within the given window. Long-lived sessions do not
+// qualify on their own.
+func (a *Auth) AuthorizeRecent(r *http.Request, within time.Duration) (githubapp.User, error) {
+	user, err := a.Authorize(r)
+	if err != nil {
+		return githubapp.User{}, err
+	}
+	cookie, err := r.Cookie(SessionCookie)
+	if err != nil {
+		return githubapp.User{}, ErrUnauthorized
+	}
+	a.mu.Lock()
+	s, ok := a.sessions[key(cookie.Value)]
+	a.mu.Unlock()
+	if !ok || !a.now().Before(s.expires) {
+		return githubapp.User{}, ErrUnauthorized
+	}
+	if within <= 0 || a.now().Sub(s.authenticatedAt) > within {
+		return githubapp.User{}, ErrStaleLogin
+	}
+	return user, nil
 }
 
 func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {

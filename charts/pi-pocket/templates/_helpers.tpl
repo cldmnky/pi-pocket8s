@@ -44,3 +44,9 @@ RuntimeDefault
 {{- define "pocket.claim" -}}
 {{- default (printf "%s-workspace" (include "pocket.fullname" .)) .Values.persistence.existingClaim -}}
 {{- end -}}
+{{- define "pocket.adminSessionSecret" -}}
+{{- default (printf "%s-admin-session" (include "pocket.fullname" .)) .Values.adminElevation.sessionSecret -}}
+{{- end -}}
+{{- define "pocket.adminClusterRoleBinding" -}}
+{{- default (printf "%s-admin-cluster-admin" (include "pocket.fullname" .)) .Values.adminElevation.clusterRoleBinding -}}
+{{- end -}}

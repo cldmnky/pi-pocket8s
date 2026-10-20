@@ -17,6 +17,7 @@
   <nav class="tabs" aria-label="Portal sections">
     <button type="button" id="tab-workspace" aria-controls="panel-workspace" aria-selected="true">Workspace</button>
     <button type="button" id="tab-configure" aria-controls="panel-configure" aria-selected="false">Configuration</button>
+    <button type="button" id="tab-admin" aria-controls="panel-admin" aria-selected="false" hidden>Cluster administration</button>
   </nav>
 </header>
 
@@ -175,6 +176,70 @@
           <li>The agent's service account has namespace admin permissions in this namespace (requested configuration). Anything running in the agent can read and modify resources here, including the runtime secret.</li>
         </ul>
       </section>
+    </section>
+
+    <section id="panel-admin" class="card" aria-labelledby="admin-title" role="tabpanel" aria-hidden="true" hidden>
+      <h2 id="admin-title">Cluster administration</h2>
+
+      <div id="admin-idle">
+        <p>Elevation starts a separate admin workspace with <strong>cluster-admin</strong>. The normal workspace remains namespace-admin and is not changed by this.</p>
+        <dl class="status-grid">
+          <div><dt>Target namespace / deployment</dt><dd id="admin-target">&ndash;</dd></div>
+        </dl>
+        <div class="field">
+          <label for="admin-reason">Reason (required; recorded in the session)</label>
+          <textarea id="admin-reason" rows="3" spellcheck="false" placeholder="Why cluster-admin access is needed"></textarea>
+        </div>
+        <div class="field">
+          <label for="admin-duration">Duration</label>
+          <select id="admin-duration"></select>
+        </div>
+        <p class="admin-warning">Cluster-admin can read and change anything in the cluster, including every namespace. Activate only for a bounded, justified task.</p>
+        <div class="field">
+          <label for="admin-confirmation">Type <code>cluster-admin</code> to confirm</label>
+          <input id="admin-confirmation" type="text" autocomplete="off" spellcheck="false" placeholder="cluster-admin">
+        </div>
+        <div class="button-row">
+          <button type="button" id="admin-activate">Activate cluster-admin</button>
+        </div>
+      </div>
+
+      <div id="admin-active" hidden>
+        <dl class="status-grid">
+          <div><dt>Session owner</dt><dd id="admin-owner">&ndash;</dd></div>
+          <div><dt>Reason</dt><dd id="admin-reason-display">&ndash;</dd></div>
+          <div><dt>Approved</dt><dd id="admin-approved">&ndash;</dd></div>
+          <div><dt>Expires</dt><dd id="admin-expires">&ndash;</dd></div>
+          <div><dt>Time remaining</dt><dd id="admin-countdown">00:00</dd></div>
+          <div><dt>Permission grant</dt><dd id="admin-grant">&ndash;</dd></div>
+          <div><dt>Admin workspace</dt><dd id="admin-workspace-ready">&ndash;</dd></div>
+          <div><dt>Controller observation</dt><dd id="admin-freshness">&ndash;</dd></div>
+        </dl>
+        <p id="admin-stale-warning" class="message error" hidden>Controller observation is stale. Access state is uncertain.</p>
+        <p id="admin-expired-warning" class="message error" hidden>This session has reached its expiry. Access may remain granted until revocation completes; state is uncertain.</p>
+        <div class="button-row">
+          <button type="button" id="admin-open-workspace" hidden>Open admin workspace</button>
+          <button type="button" id="admin-open-terminal" class="secondary" hidden>Open admin terminal</button>
+          <button type="button" id="admin-access-button" class="secondary" hidden>Get access link</button>
+          <button type="button" id="admin-revoke" class="secondary" hidden>Revoke access</button>
+        </div>
+        <div id="admin-access" hidden>
+          <div class="field">
+            <label for="admin-access-url">Admin access link (a cluster-admin credential; never stored by this page)</label>
+            <input id="admin-access-url" type="text" readonly autocomplete="off" spellcheck="false">
+          </div>
+          <div class="button-row">
+            <button type="button" id="admin-access-copy" class="secondary">Copy link</button>
+            <button type="button" id="admin-access-open" class="secondary">Open link</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="admin-failure" hidden>
+        <p id="admin-failure-heading" class="message error">&ndash;</p>
+        <p id="admin-failure-detail" class="hint"></p>
+        <p id="admin-failure-code" class="hint" hidden></p>
+      </div>
     </section>
   </div>
 </main>

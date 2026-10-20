@@ -113,6 +113,41 @@ Login does not delegate a user's token or restrict repository access per user.
 In the workspace, use `gh repo clone cldmnky/pi-pocket8s` or
 `gh pr list -R cldmnky/pi-pocket8s`; each command obtains a one-repository App bot token.
 
+## Optional: on-demand cluster-admin workspace
+
+The default installation never has cluster-admin. When you need it, the same
+chart can run a **second, isolated workspace** that receives `cluster-admin` only
+for a bounded, justified session activated by an authorized operator in the
+portal:
+
+- The normal workspace keeps its namespace permissions and never receives the
+  elevated workspace's credentials, storage, or home.
+- Activation requires GitHub sign-in, membership of the portal's login policy, an
+  explicit numeric user-ID allowlist, a recent sign-in, a justification, and a
+  bounded duration (15 minutes by default, 30 maximum). Token authentication is
+  refused by default; the explicit `adminElevation.allowTokenAuth=true` opt-in
+  accepts that the shared portal token then becomes an elevation credential.
+- A reconciler in the management namespace applies the grant and removes it on
+  expiry or revocation, independent of the portal and of any open browser. A
+  session survives a portal restart; its deadline is never extended.
+- The grant lives on one predefined, inert `ClusterRoleBinding`
+  (`subjects: []` while idle). A fresh session starts a fresh workspace with
+  `emptyDir` storage, so owner credentials and invitations do not carry over.
+- The admin sign-in link is only returned to the operator who activated the
+  session, only while the state is fresh and the observed Pod UID still matches.
+- Cleanup that cannot be confirmed stays visible as `CleanupRequired`; new
+  activations are refused until it clears.
+
+Enable it only with `adminElevation.enabled=true` and the explicit
+`adminElevation.bootstrap=true`, in GitHub authentication mode, in a third
+namespace distinct from both the workspace and the portal. See
+[the runbook](docs/cluster-admin-runbook.md) for install, revocation, failure
+codes, and emergency recovery, and
+[the plan](docs/cluster-admin-workspace-plan.md) for the security contract.
+
+An unrestricted cluster-admin agent can read cluster Secrets and modify RBAC.
+Expiry bounds the original grant; it does not reverse what was done with it.
+
 ## Build and publish locally
 
 A Quay account able to create repositories in `cldmnky` is required for the first push. Afterward grant the CI robot write access to **both** repositories.

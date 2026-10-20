@@ -109,8 +109,15 @@ spec:
               readOnly: true
             {{- end }}
             {{- end }}
+            {{- if eq .Values.persistence.mode "ephemeral" }}
+            - name: workspace-home
+              mountPath: /workspace/home
+            - name: workspace-repos
+              mountPath: /workspace/repos
+            {{- else }}
             - name: workspace
               mountPath: /workspace
+            {{- end }}
             - name: runtime-config
               mountPath: /run/pocket-config
               readOnly: true
@@ -148,9 +155,17 @@ spec:
             defaultMode: 0440
         {{- end }}
         {{- end }}
+        {{- if eq .Values.persistence.mode "ephemeral" }}
+        # Ephemeral admin sessions mount emptyDir: no PVC, fresh home and repos.
+        - name: workspace-home
+          emptyDir: {}
+        - name: workspace-repos
+          emptyDir: {}
+        {{- else }}
         - name: workspace
           persistentVolumeClaim:
             claimName: {{ include "pocket.claim" . }}
+        {{- end }}
         - name: runtime-config
           secret:
             secretName: {{ include "pocket.runtimeSecret" . }}

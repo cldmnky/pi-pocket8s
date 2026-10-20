@@ -7,10 +7,13 @@ import (
 
 // ObjectMeta is the subset of Kubernetes object metadata the portal uses.
 type ObjectMeta struct {
-	Name            string            `json:"name,omitempty"`
-	Namespace       string            `json:"namespace,omitempty"`
-	ResourceVersion string            `json:"resourceVersion,omitempty"`
-	Annotations     map[string]string `json:"annotations,omitempty"`
+	Name              string            `json:"name,omitempty"`
+	Namespace         string            `json:"namespace,omitempty"`
+	UID               string            `json:"uid,omitempty"`
+	ResourceVersion   string            `json:"resourceVersion,omitempty"`
+	DeletionTimestamp *string           `json:"deletionTimestamp,omitempty"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	Annotations       map[string]string `json:"annotations,omitempty"`
 }
 
 // Secret is the core/v1 Secret subset used by the portal. Data values are
@@ -48,7 +51,13 @@ type Deployment struct {
 // DeploymentSpec is the subset of a Deployment spec the portal reads.
 type DeploymentSpec struct {
 	Replicas *int32          `json:"replicas,omitempty"`
+	Selector *LabelSelector  `json:"selector,omitempty"`
 	Template PodTemplateSpec `json:"template"`
+}
+
+// LabelSelector is the matchLabels subset of a label selector.
+type LabelSelector struct {
+	MatchLabels map[string]string `json:"matchLabels,omitempty"`
 }
 
 // PodTemplateSpec is the subset of a pod template the portal reads.
@@ -88,4 +97,64 @@ type apiStatus struct {
 	Message string `json:"message"`
 	Reason  string `json:"reason"`
 	Code    int    `json:"code"`
+}
+
+// RoleRef is the role a ClusterRoleBinding references.
+type RoleRef struct {
+	APIGroup string `json:"apiGroup"`
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+}
+
+// Subject is one ClusterRoleBinding subject.
+type Subject struct {
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace,omitempty"`
+}
+
+// ClusterRoleBinding is the rbac.authorization.k8s.io/v1 subset the portal and
+// controller use for the one predefined cluster-admin binding.
+type ClusterRoleBinding struct {
+	APIVersion string     `json:"apiVersion,omitempty"`
+	Kind       string     `json:"kind,omitempty"`
+	Metadata   ObjectMeta `json:"metadata"`
+	RoleRef    RoleRef    `json:"roleRef"`
+	Subjects   []Subject  `json:"subjects"`
+}
+
+// Pod is the core/v1 subset needed to observe the admin workspace's active Pod.
+type Pod struct {
+	APIVersion string     `json:"apiVersion,omitempty"`
+	Kind       string     `json:"kind,omitempty"`
+	Metadata   ObjectMeta `json:"metadata"`
+	Status     PodStatus  `json:"status"`
+}
+
+// PodStatus carries the fields the controller observes on a Pod.
+type PodStatus struct {
+	Phase             string            `json:"phase,omitempty"`
+	PodIP             string            `json:"podIP,omitempty"`
+	StartTime         string            `json:"startTime,omitempty"`
+	Conditions        []PodCondition    `json:"conditions,omitempty"`
+	ContainerStatuses []ContainerStatus `json:"containerStatuses,omitempty"`
+}
+
+// PodCondition is one Pod status condition.
+type PodCondition struct {
+	Type   string `json:"type"`
+	Status string `json:"status"`
+}
+
+// ContainerStatus is one container's status within a Pod.
+type ContainerStatus struct {
+	Name  string `json:"name"`
+	Ready bool   `json:"ready"`
+}
+
+// PodList is a core/v1 PodList subset.
+type PodList struct {
+	APIVersion string `json:"apiVersion,omitempty"`
+	Kind       string `json:"kind,omitempty"`
+	Items      []Pod  `json:"items"`
 }
