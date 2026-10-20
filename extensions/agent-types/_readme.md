@@ -25,6 +25,12 @@ tools, or instructions — no restart needed: the next spawn sees the change.
 | `coder` | `opencode-go/deepseek-v4.1-flash` | Implements the plan, writes tests, runs them, fixes failures. |
 | `reviewer` | `opencode-go/glm-5.3` | Verifies the change against the requirements. Writes nothing. |
 
+A type's model must be the session's own model or one allowed for subagents in **Menu → Providers**;
+Pi refuses a spawn on any other. The image's entrypoint allows the shipped types' models once per
+workspace (through the app's API, recorded in `~/.pi-pocket/.subagent-models-seeded`), so they work
+without setup. A model the owner stops allowing there stays stopped; delete that marker and restart
+to seed the shipped models again.
+
 For non-trivial development work: **architect → coder → reviewer**, then send the findings back to the coder and
 have the reviewer verify (at most two review/fix cycles, then report what is unresolved). Keep the plan, the merges,
 and the final checks in the main conversation; use a git worktree per feature; never let two agents edit the same

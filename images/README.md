@@ -2,7 +2,7 @@
 
 `images/Containerfile` builds `quay.io/cldmnky/pi-pocket`: upstream
 [pi-pocket](https://github.com/TannerMidd/pi-pocket) at pinned commit
-`e1298a0e8e674211d37ef71ecabef0ec8a9af13c` (v0.12.2) on UBI 10, plus an integrated
+`26542deded0123d6b217828ed2f71f566d9a7a19` (v0.17.0) on UBI 10, plus an integrated
 developer toolchain. It runs as a fixed non-root user and keeps everything it writes on
 the volumes mounted at `/workspace/home` and `/workspace/repos`.
 
@@ -31,7 +31,7 @@ verified against the vendor's published SHA-256; RPMS are GPG-verified by `dnf`.
 | Component | Source |
 | --- | --- |
 | Base | `registry.access.redhat.com/ubi10/ubi:latest` (multi-arch, RHEL 10) |
-| Pi Pocket | upstream commit `e1298a0…`, cloned and `git rev-parse`-verified in the build, `npm ci` from the committed lockfile (with dev dependencies) into `/opt/pi-pocket` |
+| Pi Pocket | upstream commit `26542ded…`, cloned and `git rev-parse`-verified in the build, `npm ci` from the committed lockfile (with dev dependencies) into `/opt/pi-pocket` |
 | Node | RHEL `nodejs24` (Node 24 + npm 11), exposed as `node`/`npm`/`npx` in `/usr/local/bin`; `node:sqlite` and `jiti` are runtime requirements |
 | Go | RHEL `golang` |
 | Python | RHEL `python3`, `python3-pip`, `python3-devel`, `venv` |
@@ -154,6 +154,16 @@ Conventions for agents in this pod:
 the `/agent-browser …` slash command with no further setup. In-pod edits
 survive restarts; deleting a file re-seeds the shipped copy on the next pod
 start, which is also how updates reach an existing volume.
+
+At boot the entrypoint also copies the shipped subagent types (`~/.pi/agent/agents/`,
+copy-if-missing), and merges the `models.json` with the `kimi-k3` strict-mode override
+before the app starts. Pi Pocket 0.17.0's **Refresh models** re-reads that same file,
+so the override survives a refresh. Because a subagent may only run on its session's
+model or one the owner allowed in **Menu → Providers**, the entrypoint then allows the
+shipped types' models once per model through the app's API.
+`~/.pi-pocket/.subagent-models-seeded` records what was seeded, so a model the owner
+stops allowing stays stopped; delete that file (and restart) to seed the shipped models
+again.
 
 ## Pod security profiles
 
