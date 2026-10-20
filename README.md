@@ -381,13 +381,20 @@ around, and the type's `thinking` level must be one the model offers (the model 
 `opencode-go` offers `low`, `high`, and `max`). Nothing here is specific to OpenCode: point a type
 at any model the install is signed in to.
 
+What a subagent may run on is the owner's call: a spawn uses the session's own model, or one allowed
+for subagents in **Menu → Providers** — anything else is refused. The entrypoint therefore allows the
+shipped types' models once per workspace through the app's own API, so `architect`, `coder`, and
+`reviewer` work on a fresh install. A model the owner stops allowing there stays stopped: only models
+that were never seeded are added again. To seed the shipped models again, delete
+`~/.pi-pocket/.subagent-models-seeded` and restart.
+
 Two things about subagents are worth knowing, because both looked like "the subagent never answered":
 
 - **A subagent whose run fails may report nothing at all.** A failure normally comes back as
   `[subagent <name> failed: …]` — three of three failed probes did on the older code. The one that
   went silent was the one a *second* message had been sent to after its run had already failed: its
   reporter waited for an answer that could not come, and *Running now* said so. That is the case the
-  pinned upstream (0.12.2) reworks — the message is withdrawn and the failure reported through a
+  pinned upstream (0.17.0) reworks — the message is withdrawn and the failure reported through a
   courier, instead of a submission that can wait for good. Either way a report is a message to the
   parent, delivered at the parent's next pause: while the parent is in the middle of a long turn, a
   report that was already sent still looks like silence, and then arrives with the others. If a
