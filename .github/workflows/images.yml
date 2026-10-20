@@ -41,7 +41,19 @@ on:
       - "*"
   schedule:
     - cron: "43 3 * * 1"
+  # Publishing rules, whatever triggers a run: pull requests build and smoke-test
+  # only, never push. Every other run publishes the two architecture images and the
+  # multi-arch manifest under sha-<commit>. `latest` is written only from main, so a
+  # dispatch on a branch publishes without moving what the chart deploys. A manual
+  # run may add one readable alias beside the commit tag (input `tag`); `latest`
+  # cannot be set that way.
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Optional extra tag for the published images (e.g. 0.17.0). Never latest."
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -353,6 +365,8 @@ jobs:
       - name: Create the multi-arch manifest
         env:
           IMAGE: ${{ env.QUAY_REGISTRY }}/${{ env.QUAY_NAMESPACE }}/${{ matrix.image }}
+          # Passed through the environment, never interpolated into the script.
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
           refs=("docker://${IMAGE}:sha-${GITHUB_SHA}-amd64" "docker://${IMAGE}:sha-${GITHUB_SHA}-arm64")
@@ -364,6 +378,18 @@ jobs:
           # partial index cannot be published quietly.
           sudo podman manifest create "${IMAGE}:sha-${GITHUB_SHA}" "${refs[@]}"
           sudo podman manifest push --all=false "${IMAGE}:sha-${GITHUB_SHA}" "docker://${IMAGE}:sha-${GITHUB_SHA}"
+
+          # A manual run may publish one readable alias beside the commit tag. It can
+          # never write latest: that stays reserved for main, where it tracks the
+          # merged image the chart deploys.
+          if [ -n "${INPUT_TAG}" ]; then
+            if [ "${INPUT_TAG}" = "latest" ] || ! [[ "${INPUT_TAG}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+              echo "::error::refusing tag '${INPUT_TAG}': use letters, digits, _ . - and not latest"
+              exit 1
+            fi
+            sudo podman manifest push --all=false "${IMAGE}:sha-${GITHUB_SHA}" "docker://${IMAGE}:${INPUT_TAG}"
+            echo "published ${IMAGE}:${INPUT_TAG}"
+          fi
 
           if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
             sudo podman manifest push --all=false "${IMAGE}:sha-${GITHUB_SHA}" "docker://${IMAGE}:latest"
