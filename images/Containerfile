@@ -261,6 +261,7 @@ COPY --chown=1000:1000 extensions/web-search/ /opt/pi-pocket/src/server/extensio
 # ~/.pi/agent/agents/ — the editable copy the agent reads. See
 # extensions/agent-types/_readme.md for the format and the workflow.
 COPY --chown=1000:1000 extensions/agent-types.ts /opt/pi-pocket/src/server/extensions/agent-types.ts
+COPY --chown=1000:1000 extensions/agent-types-policy.ts /opt/pi-pocket/src/server/extensions/agent-types-policy.ts
 COPY --chown=1000:1000 extensions/agent-types/ /usr/share/pi-agent/agents/
 
 # Fail the build if the extension stops loading, stops installing its wrap, or if a shipped
