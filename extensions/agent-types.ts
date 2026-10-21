@@ -24,7 +24,7 @@ import {
     fallsBackToSessionModel,
     projectFolders,
     type ProjectTrust,
-} from "./agent-types-policy.ts";
+} from "./_agent-types-policy.ts";
 
 type ToolContext = Parameters<ToolRegistration["execute"]>[2];
 

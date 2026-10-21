@@ -1,4 +1,6 @@
 /**
+ * The leading `_` keeps Pi Pocket's extension loader from loading this helper as an extension module.
+ *
  * The parts of the agent-type extension that can be decided without Pi: which folders a project trust decision loads,
  * which thinking level a spawn asks for, and whether a type's model can run at the session's level. They live apart
  * from `agent-types.ts` so `node --test` can exercise them without the Pi runtime.

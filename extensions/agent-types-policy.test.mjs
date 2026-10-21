@@ -1,6 +1,6 @@
 // The decisions the agent-type extension makes without Pi: which project folders a trust answer opens, the thinking
 // level a spawn asks for, and when a type's model gives way to the session's. The extension itself imports the Pi
-// runtime, so these live in agent-types-policy.ts and are tested here on their own.
+// runtime, so these live in _agent-types-policy.ts and are tested here on their own.
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -9,7 +9,7 @@ import {
     fallsBackToSessionModel,
     projectFolders,
     wantedThinking,
-} from "./agent-types-policy.ts";
+} from "./_agent-types-policy.ts";
 
 const glm = { model: { provider: "opencode-go", modelId: "glm-5.3" }, thinkingLevels: ["low", "high", "max"] };
 const k3 = { model: { provider: "opencode-go", modelId: "kimi-k3" }, thinkingLevels: ["max"] };
