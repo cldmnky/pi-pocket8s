@@ -262,6 +262,7 @@ COPY --chown=1000:1000 extensions/web-search/ /opt/pi-pocket/src/server/extensio
 # extensions/agent-types/_readme.md for the format and the workflow.
 COPY --chown=1000:1000 extensions/agent-types.ts /opt/pi-pocket/src/server/extensions/agent-types.ts
 COPY --chown=1000:1000 extensions/_agent-types-policy.ts /opt/pi-pocket/src/server/extensions/_agent-types-policy.ts
+COPY --chown=1000:1000 extensions/agent-types-runtime.test.mjs /tmp/agent-types-runtime.test.mjs
 COPY --chown=1000:1000 extensions/agent-types/ /usr/share/pi-agent/agents/
 
 # Fail the build if the extension stops loading, stops installing its wrap, or if a shipped
@@ -287,6 +288,14 @@ RUN set -eux; \
         } \
         console.log("agent-types extension ok"); \
     '
+
+# The project-trust wiring needs the real trust store and settings manager. Run the test against the copy above;
+# it is not part of the image once the check is done.
+RUN set -eux; \
+    cd /opt/pi-pocket; \
+    AGENT_TYPES_MODULE=/opt/pi-pocket/src/server/extensions/agent-types.ts \
+        node --test /tmp/agent-types-runtime.test.mjs; \
+    rm -f /tmp/agent-types-runtime.test.mjs
 
 # Fail the build if the extension stops loading or stops installing its tools. `node` runs the
 # TypeScript as it is; the module imports only what the image already has.

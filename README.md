@@ -338,19 +338,19 @@ The definitions are **data, not code**, and are yours to edit: the image seeds t
 workspace does not have into `~/.pi/agent/agents/` at start (copy-if-missing, so an edit or a
 deletion is never undone), and a project can add or override types in its own `.pi/agents/`
 (unless the project is distrusted) or `.agents/agents/` (only when it is trusted). That is Pi's
-project trust, shared with the CLI and the skills. The
-next spawn sees a change — no restart. The format, the workflow, and what has no equivalent here
+project trust, shared with the CLI and the skills. The next spawn sees a change — no restart. The format, the
+workflow, and what has no equivalent here
 (there is no maximum-turn setting, no concurrency cap, no per-type worktree isolation) are in
 [`extensions/agent-types/_readme.md`](extensions/agent-types/_readme.md).
 
 Models are per-deployment: the shipped files use the OpenCode Go models the workflow was designed
 around, and the type's `thinking` level must be one the model offers (the model picker lists them;
 `kimi-k3` offers only `max`, while `deepseek-v4.1-flash` and `glm-5.3` offer `low`, `high`, and
-`max`). A type's model is used only when it is allowed for subagents and can think at the session's
-level or lower; otherwise the subagent runs on the session's model, and the started message names
-the model actually used. That is why `architect` works from any session: it uses `kimi-k3` at max
-and the session's model otherwise. Nothing here is specific to OpenCode: point a type at any model
-the install is signed in to.
+`max`). When a type's model is allowed but cannot think at the session's level or lower, the
+subagent runs on the session's model, and the started message names the model actually used; a model
+that is not allowed, or is unknown, is refused. That is why `architect` works from any session: it
+uses `kimi-k3` at max and the session's model otherwise. Nothing here is specific to OpenCode: point
+a type at any model the install is signed in to.
 
 What a subagent may run on is the owner's call: a spawn uses the session's own model, or one allowed
 for subagents in **Menu → Providers** — anything else is refused. The entrypoint therefore allows the

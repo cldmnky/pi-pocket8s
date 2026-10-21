@@ -81,7 +81,8 @@ function projectTrust(cwd: string, agentDir: string): ProjectTrust {
     try {
         saved = new ProjectTrustStore(agentDir).get(cwd);
     } catch {
-        // An unreadable trust store is undecided, not a reason to load more.
+        // A corrupt or unreadable trust store decides nothing: load only `.pi/agents`, as the skills do.
+        return "undecided";
     }
 
     if (saved === true) {
@@ -176,7 +177,7 @@ export default function createAgentTypes(host: PocketHost) {
             ...tool,
             description:
                 builtIn.description +
-                " Optional type: a preconfigured agent type (see the subagents section for the list); its model and brief are applied and win over yours when the model can think at this session's level or lower (otherwise the session's model is used), its thinking and tools where you set none.",
+                " Optional type: a preconfigured agent type (see the subagents section for the list); its brief is applied and wins over yours, and its model wins when it is allowed and can think at this session's level or lower. A model that is allowed but cannot think that low falls back to the session's model; one that is not allowed, or unknown, is refused by the built-in. Its thinking and tools apply where you set none.",
             parameters: Type.Object({
                 ...builtIn.parameters.properties,
                 thinking: Type.Optional(
@@ -290,9 +291,8 @@ export default function createAgentTypes(host: PocketHost) {
 
             return (
                 `${base ?? ""}\n` +
-                "Preconfigured subagent types, for spawn with type=<name> (the type's model and brief win over the caller's when the model can think at this session's level or lower; otherwise the session's model is used. Its thinking and tools apply where the caller set none; its name is the instance name unless one is given):\n" +
+                "Preconfigured subagent types, for spawn with type=<name> (its brief wins over the caller's; its model wins when it is allowed and can think at this session's level or lower. A model that is allowed but cannot think that low runs on the session's model instead; one that is not allowed, or unknown, is refused by the built-in. Its thinking and tools apply where the caller set none; its name is the instance name unless one is given; the started message names the model actually used):\n" +
                 `${list}\n` +
-                "A type's model is used only when it is allowed for subagents and can think at this session's level or lower; otherwise the subagent runs on the session's model, and the started message names the model actually used.\n" +
                 "For non-trivial development work the intended order is architect (plan) → coder (implement) → reviewer (independent review), at most two review/fix cycles, then a report of what changed, what was run, and what is unresolved.\n" +
                 "Each type is a .md file — model, thinking, tools, description frontmatter and a markdown brief that is prepended to the first message — in .pi/agents/ (unless the project is distrusted) or .agents/agents/ (only in a trusted project) of the session folder, or ~/.pi/agent/agents/ (first match wins; edit or add files to change the types)."
             );

@@ -15,10 +15,12 @@ description: One line, shown to the agent when it picks a type
 The markdown body is the subagent's brief: it is prepended to the first message of every spawn of this type.
 ```
 
-`model` wins over the caller's when it is allowed for subagents and can think at the session's level or lower;
-otherwise the subagent runs on the session's model. `thinking` and `tools` apply where the caller set none; the
-built-in caps the level at the session's and refuses a tool the caller does not have. Values are read as plain text:
-no inline `#` comments, quoted values, or YAML arrays.
+`model` wins over the caller's when it is allowed for subagents and can think at the session's level or lower. A
+model that is allowed but cannot think that low falls back to the session's model; one that is not allowed, or is
+unknown, is refused by the built-in. Use `provider/modelId`: the fallback check needs the full spec, so a bare model id
+is left to the built-in. `thinking` and `tools` apply where the caller set none; the built-in caps the level at the
+session's and refuses a tool the caller does not have. Values are read as plain text: no inline `#` comments, quoted
+values, or YAML arrays.
 
 `enabled: false` turns a type off (also one defined in a broader folder). Edit these files to change models,
 tools, or instructions — no restart needed: the next spawn sees the change.
