@@ -1,18 +1,26 @@
 # Preconfigured subagent types
 
 Each `<name>.md` here is a subagent type for Pi Pocket's `subagent` tool, available in every session. A session's
-own folder can add or override types in `.pi/agents/` (or `.agents/agents/`), which win over these. Files starting
-with `_` are skipped, and unknown frontmatter keys are ignored, so a file written for `pi`'s subagents works here too.
+own folder can add or override types in `.pi/agents/` (unless the project is distrusted) or `.agents/agents/` (only
+when it is trusted); both win over these. The decision is Pi's, shared with the CLI and the skills (`trust.json` in
+Pi's folder, **Menu → Project trust**). Files starting with `_` are skipped, and unknown frontmatter keys are ignored.
 
 ```markdown
 ---
-model: provider/modelId          # an available model; the type's model wins over the caller's
-thinking: low                    # off | minimal | low | medium | high | xhigh | max (optional; use a level the model supports)
-tools: read, bash, web_search    # what it may use; the caller's list applies where this is unset (optional)
-description: One line, shown to the agent when it picks a type (optional)
+model: provider/modelId
+thinking: low
+tools: read, bash, web_search
+description: One line, shown to the agent when it picks a type
 ---
 The markdown body is the subagent's brief: it is prepended to the first message of every spawn of this type.
 ```
+
+`model` wins over the caller's when it is allowed for subagents and can think at the session's level or lower. A
+model that is allowed but cannot think that low falls back to the session's model; one that is not allowed, or is
+unknown, is refused by the built-in. Use `provider/modelId`: the fallback check needs the full spec, so a bare model id
+is left to the built-in. `thinking` and `tools` apply where the caller set none; the built-in caps the level at the
+session's and refuses a tool the caller does not have. Values are read as plain text: no inline `#` comments, quoted
+values, or YAML arrays.
 
 `enabled: false` turns a type off (also one defined in a broader folder). Edit these files to change models,
 tools, or instructions — no restart needed: the next spawn sees the change.
@@ -26,10 +34,12 @@ tools, or instructions — no restart needed: the next spawn sees the change.
 | `reviewer` | `opencode-go/glm-5.3` | Verifies the change against the requirements. Writes nothing. |
 
 A type's model must be the session's own model or one allowed for subagents in **Menu → Providers**;
-Pi refuses a spawn on any other. The image's entrypoint allows the shipped types' models once per
-workspace (through the app's API, recorded in `~/.pi-pocket/.subagent-models-seeded`), so they work
-without setup. A model the owner stops allowing there stays stopped; delete that marker and restart
-to seed the shipped models again.
+Pi refuses a spawn on any other. When the model is allowed but cannot think at the session's level or lower, the type
+falls back to the session's model instead of failing (the started message names the model actually used); this is
+why `architect` on `kimi-k3`, which offers only `max`, also works from a lower session. The image's entrypoint allows
+the shipped types' models once per workspace (through the app's API, recorded in
+`~/.pi-pocket/.subagent-models-seeded`), so they work without setup. A model the owner stops allowing there stays
+stopped; delete that marker and restart to seed the shipped models again.
 
 For non-trivial development work: **architect → coder → reviewer**, then send the findings back to the coder and
 have the reviewer verify (at most two review/fix cycles, then report what is unresolved). Keep the plan, the merges,
@@ -46,5 +56,6 @@ file at once. Trivial changes skip all of this.
 - "Read-only" is enforced by the tool list: `architect` and `reviewer` have no `write` or `edit`. `bash` can still
   change files, so it is a prompt-level rule unless Lancet Guard is on, which checks bash calls.
 - `thinking` must be a level the model offers; the model picker lists them. A level a model lacks becomes the
-  nearest it has. The `opencode-go` models here offer `low`, `high`, and `max` — `medium` is not among them — which
-  is why the types above use `max` and `high`.
+  nearest lower one it has. The shipped models differ: `kimi-k3` offers only `max`; `deepseek-v4.1-flash` and
+  `glm-5.3` offer `low`, `high`, and `max` (no `medium`). The fallback above is why `architect` still works from a
+  lower session.

@@ -1,8 +1,9 @@
 /**
  * Preconfigured subagent types: markdown files with a model, thinking level, tool list, and brief, applied when the
- * built-in subagent tool spawns with `type`. Files come from `.pi/agents/` or `.agents/agents/` in the session folder,
- * or `~/.pi/agent/agents/` everywhere (the first match wins), in the same layout as `pi`'s subagents use, so a file
- * works in both.
+ * built-in subagent tool spawns with `type`. Files come from `.pi/agents/` (unless the project is distrusted) or
+ * `.agents/agents/` (only when it is trusted) in the session folder, or `~/.pi/agent/agents/` everywhere (the first
+ * match wins). A type's model gives way to the session's model when it cannot think at the session's level; the
+ * built-in still owns the model allow-list, the tool list, and the thinking cap.
  */
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -16,7 +17,14 @@ import {
     type ToolExecutionApi,
     type ToolRegistration,
 } from "@earendil-works/pi-durable";
+import { ProjectTrustStore, SettingsManager } from "@earendil-works/pi-coding-agent";
 import type { PocketHost } from "/opt/pi-pocket/src/server/host.ts";
+import {
+    THINKING,
+    fallsBackToSessionModel,
+    projectFolders,
+    type ProjectTrust,
+} from "./_agent-types-policy.ts";
 
 type ToolContext = Parameters<ToolRegistration["execute"]>[2];
 
@@ -41,15 +49,6 @@ type AgentType = {
     brief?: string;
 };
 
-/**
- * Pi's own thinking levels (`ModelThinkingLevel`), in its order. The built-in subagent tool's schema
- * offered only the first six before 0.12.2, so a type could not ask for `max` — the only level some
- * models have, such as Kimi K3 — even though the runtime took it. The wrapped schema below rebuilds
- * the union from this list, which keeps a type working on either version, and carries the level's
- * own description across.
- */
-const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-
 /** A leading `---` block of `key: value` lines; unknown keys are ignored so `pi`'s agent files work here too. */
 function parseFrontmatter(text: string): { fields: Record<string, string>; body: string } {
     const lines = text.split(/\r?\n/);
@@ -72,9 +71,43 @@ function parseFrontmatter(text: string): { fields: Record<string, string>; body:
     return { fields, body: (end === -1 ? [] : lines.slice(end + 1)).join("\n").trim() };
 }
 
+/**
+ * Pi's answer for a project, read as `skills.ts` reads it: a saved trust decision, else Pi's global
+ * `defaultProjectTrust`. An unreadable store or settings file decides nothing, so only `.pi/agents` loads.
+ */
+function projectTrust(cwd: string, agentDir: string): ProjectTrust {
+    let saved: boolean | null = null;
+
+    try {
+        saved = new ProjectTrustStore(agentDir).get(cwd);
+    } catch {
+        // A corrupt or unreadable trust store decides nothing: load only `.pi/agents`, as the skills do.
+        return "undecided";
+    }
+
+    if (saved === true) {
+        return "trusted";
+    }
+
+    if (saved === false) {
+        return "distrusted";
+    }
+
+    let fallback = "ask";
+
+    try {
+        fallback = SettingsManager.create(cwd, agentDir).getGlobalSettings().defaultProjectTrust ?? "ask";
+    } catch {
+        // Pi's global settings unreadable: ask, so only `.pi/agents` loads.
+    }
+
+    return fallback === "always" ? "trusted" : fallback === "never" ? "distrusted" : "undecided";
+}
+
 /** Every agent type in scope for a session folder, by name; a project file shadows a global one with the same name. */
 async function loadTypes(cwd: string | undefined, agentDir: string): Promise<Map<string, AgentType>> {
-    const folders = cwd === undefined ? [] : [join(cwd, ".pi", "agents"), join(cwd, ".agents", "agents")];
+    const folders =
+        cwd === undefined ? [] : projectFolders(cwd, projectTrust(cwd, agentDir));
     const types = new Map<string, AgentType>();
     const disabled = new Set<string>();
 
@@ -144,7 +177,7 @@ export default function createAgentTypes(host: PocketHost) {
             ...tool,
             description:
                 builtIn.description +
-                " Optional type: a preconfigured agent type (see the subagents section for the list); its model and brief are applied and win over yours, its thinking and tools where you set none.",
+                " Optional type: a preconfigured agent type (see the subagents section for the list); its brief is applied and wins over yours, and its model wins when it is allowed and can think at this session's level or lower. A model that is allowed but cannot think that low falls back to the session's model; one that is not allowed, or unknown, is refused by the built-in. Its thinking and tools apply where you set none.",
             parameters: Type.Object({
                 ...builtIn.parameters.properties,
                 thinking: Type.Optional(
@@ -177,7 +210,8 @@ export default function createAgentTypes(host: PocketHost) {
                 }
 
                 const type = args.type.trim().toLowerCase();
-                const cwd = (await api.agent(context)).cwd;
+                const parent = await api.agent(context);
+                const cwd = parent.cwd;
                 const types = await loadTypes(cwd, host.agentDir);
                 const definition = types.get(type);
 
@@ -197,12 +231,35 @@ export default function createAgentTypes(host: PocketHost) {
                 const next: SubagentArgs = { ...args };
 
                 delete next.type;
-                next.name = given === undefined || given === "" ? type : args.name;
+                next.name = given === undefined || given === "" ? type : given;
                 if (definition.model !== undefined) next.model = definition.model;
                 if (definition.thinking !== undefined && args.thinking === undefined) next.thinking = definition.thinking;
                 if (definition.tools !== undefined && args.tools === undefined) next.tools = definition.tools;
                 if (definition.brief !== undefined && args.message?.trim() !== undefined) {
                     next.message = `${definition.brief}\n\n${args.message}`;
+                }
+
+                // The built-in refuses a foreign model that cannot think at or below the session's level.
+                // A type that asks for one still works, on the session's model, rather than failing the
+                // spawn: the built-in's started message names the model that actually runs. A model that
+                // is unknown, disallowed, or the session's own is left to the built-in, so its refusal
+                // (or its clamp) is what the caller sees.
+                if (
+                    definition.model !== undefined &&
+                    fallsBackToSessionModel({
+                        typeModel: definition.model,
+                        parentModel: parent.model,
+                        info: host.modelInfo(definition.model),
+                        allowed:
+                            typeof host.subagentModels === "function" ? host.subagentModels() : [],
+                        asked:
+                            definition.thinking !== undefined && args.thinking === undefined
+                                ? definition.thinking
+                                : args.thinking,
+                        sessionLevel: parent.thinkingLevel ?? "off",
+                    })
+                ) {
+                    delete next.model;
                 }
 
                 return builtIn.execute(next, api, context);
@@ -234,10 +291,10 @@ export default function createAgentTypes(host: PocketHost) {
 
             return (
                 `${base ?? ""}\n` +
-                "Preconfigured subagent types, for spawn with type=<name> (the type's model and brief win over the caller's; its thinking and tools apply where the caller set none; its name is the instance name unless one is given):\n" +
+                "Preconfigured subagent types, for spawn with type=<name> (its brief wins over the caller's; its model wins when it is allowed and can think at this session's level or lower. A model that is allowed but cannot think that low runs on the session's model instead; one that is not allowed, or unknown, is refused by the built-in. Its thinking and tools apply where the caller set none; its name is the instance name unless one is given; the started message names the model actually used):\n" +
                 `${list}\n` +
                 "For non-trivial development work the intended order is architect (plan) → coder (implement) → reviewer (independent review), at most two review/fix cycles, then a report of what changed, what was run, and what is unresolved.\n" +
-                "Each type is a .md file — model, thinking, tools, description frontmatter and a markdown brief that is prepended to the first message — in .pi/agents/ or .agents/agents/ of the session folder, or ~/.pi/agent/agents/ (first match wins; edit or add files to change the types)."
+                "Each type is a .md file — model, thinking, tools, description frontmatter and a markdown brief that is prepended to the first message — in .pi/agents/ (unless the project is distrusted) or .agents/agents/ (only in a trusted project) of the session folder, or ~/.pi/agent/agents/ (first match wins; edit or add files to change the types)."
             );
         },
     }));

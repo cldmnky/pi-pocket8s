@@ -25,6 +25,7 @@ on:
     paths:
       - ".dockerignore"
       - ".github/workflows/images.yml"
+      - "extensions/**"
       - "images/**"
       - "portal/**"
       - "Makefile"
@@ -34,6 +35,7 @@ on:
     paths:
       - ".dockerignore"
       - ".github/workflows/images.yml"
+      - "extensions/**"
       - "images/**"
       - "portal/**"
       - "Makefile"
