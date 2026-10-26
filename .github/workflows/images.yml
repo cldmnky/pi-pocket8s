@@ -214,10 +214,10 @@ jobs:
           for _ in $(seq 1 30); do
             logs="$(sudo podman logs smoke 2>&1)"
             if sudo podman exec smoke jq -e '(.subagentModels // []) as $allowed
-                | ["opencode-go/kimi-k3", "opencode-go/deepseek-v4.1-flash", "opencode-go/glm-5.3"]
+                | ["opencode-go/mimo-v2.6-pro", "opencode-go/deepseek-v4.1-flash", "opencode-go/glm-5.3"]
                 | map(. as $model | $allowed | index($model) != null) | all' \
                 /workspace/home/.pi-pocket/config.json >/dev/null 2>&1 \
-              && grep -qF 'allowed opencode-go/kimi-k3 for subagents' <<<"${logs}" \
+              && grep -qF 'allowed opencode-go/mimo-v2.6-pro for subagents' <<<"${logs}" \
               && grep -qF 'allowed opencode-go/deepseek-v4.1-flash for subagents' <<<"${logs}" \
               && grep -qF 'allowed opencode-go/glm-5.3 for subagents' <<<"${logs}"; then
               seeded=1

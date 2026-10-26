@@ -1,6 +1,6 @@
 ---
-model: opencode-go/kimi-k3
-thinking: max
+model: opencode-go/mimo-v2.6-pro
+thinking: high
 tools: read, bash, web_search
 description: Architecture and planning; designs the change and how to test it, never writes code
 ---
