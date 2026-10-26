@@ -74,3 +74,29 @@ test("a type's lower thinking level is honored when its model offers it", () => 
         "glm's low is below the session's max",
     );
 });
+
+// 0.20 changed what the allow-list means: while it is empty a subagent runs only on its session's model, and while it
+// is nonempty, only on the models it lists — including the session's own. A fallback that drops a type's model for a
+// session model the list does not have would therefore be refused, and with a less useful message than the type
+// model's own refusal, so both models have to be allowed before the type's gives way.
+test("a fallback needs the session's model on the allow-list too", () => {
+    const options = {
+        typeModel: "opencode-go/kimi-k3",
+        parentModel: parentGlm,
+        info: k3,
+        allowed: ["opencode-go/kimi-k3"],
+        asked: "max",
+        sessionLevel: "high",
+    };
+
+    assert.equal(
+        fallsBackToSessionModel(options),
+        false,
+        "the type model is allowed but the session's is not: the type's model is kept for the built-in to judge",
+    );
+    assert.equal(
+        fallsBackToSessionModel({ ...options, allowed }),
+        true,
+        "both listed: the existing fallback applies",
+    );
+});

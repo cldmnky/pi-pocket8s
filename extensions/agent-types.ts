@@ -2,8 +2,13 @@
  * Preconfigured subagent types: markdown files with a model, thinking level, tool list, and brief, applied when the
  * built-in subagent tool spawns with `type`. Files come from `.pi/agents/` (unless the project is distrusted) or
  * `.agents/agents/` (only when it is trusted) in the session folder, or `~/.pi/agent/agents/` everywhere (the first
- * match wins). A type's model gives way to the session's model when it cannot think at the session's level; the
- * built-in still owns the model allow-list, the tool list, and the thinking cap.
+ * match wins). A type's model gives way to the session's model when both are allowed and it cannot think at the
+ * session's level; the built-in still owns the model allow-list, the tool list, and how a requested thinking level
+ * meets the model it runs on.
+ *
+ * `pocketApi` is the Pi Pocket extension API this file targets. 2 is the current one, where a tool result carries its
+ * parts in `output` (Pi Durable 1.2 renamed it from `content`); Pi Pocket's `content` shim covers drop-ins only, and a
+ * built-in gets none, so the field name has to be right here.
  */
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -27,6 +32,9 @@ import {
 } from "./_agent-types-policy.ts";
 
 type ToolContext = Parameters<ToolRegistration["execute"]>[2];
+
+/** The Pi Pocket extension API this module is written for: 2 (`POCKET_API` in the application). */
+export const pocketApi = 2;
 
 /** What the built-in subagent tool accepts (its own schema, minus the `type` this extension adds). */
 type SubagentArgs = {
@@ -161,7 +169,7 @@ export default function createAgentTypes(host: PocketHost) {
         name: "subagent",
         description: "Marker for the built-in subagent tool.",
         parameters: Type.Object({}),
-        execute: async () => ({ content: [] }),
+        execute: async () => ({ output: [] }),
     });
 
     const subagents = wrapTool(marker, (tool) => {
@@ -177,7 +185,7 @@ export default function createAgentTypes(host: PocketHost) {
             ...tool,
             description:
                 builtIn.description +
-                " Optional type: a preconfigured agent type (see the subagents section for the list); its brief is applied and wins over yours, and its model wins when it is allowed and can think at this session's level or lower. A model that is allowed but cannot think that low falls back to the session's model; one that is not allowed, or unknown, is refused by the built-in. Its thinking and tools apply where you set none.",
+                " Optional type: a preconfigured agent type (see the subagents section for the list); its brief is applied and wins over yours, and its model wins when the allow-list has it and it can think at this session's level or lower. One the allow-list has, but which cannot think that low while the session's model is allowed too, falls back to the session's model; a model the allow-list does not have, or that is unknown, is refused by the built-in. Its thinking and tools apply where you set none.",
             parameters: Type.Object({
                 ...builtIn.parameters.properties,
                 thinking: Type.Optional(
@@ -239,11 +247,13 @@ export default function createAgentTypes(host: PocketHost) {
                     next.message = `${definition.brief}\n\n${args.message}`;
                 }
 
-                // The built-in refuses a foreign model that cannot think at or below the session's level.
-                // A type that asks for one still works, on the session's model, rather than failing the
-                // spawn: the built-in's started message names the model that actually runs. A model that
-                // is unknown, disallowed, or the session's own is left to the built-in, so its refusal
-                // (or its clamp) is what the caller sees.
+                // The type's model cannot think at the level this spawn is compared against, but the
+                // allow-list has both models: run on the session's model rather than fail the spawn,
+                // and the built-in's started message names the model that actually runs. A type model
+                // the allow-list lacks, or that is unknown, or the session's own model, is left to the
+                // built-in, so its refusal (or its own lowering of the level) is what the caller sees.
+                // Dropping the model when the session's model is not allowed either would replace that
+                // refusal with "model is required", which says less.
                 if (
                     definition.model !== undefined &&
                     fallsBackToSessionModel({
@@ -291,7 +301,7 @@ export default function createAgentTypes(host: PocketHost) {
 
             return (
                 `${base ?? ""}\n` +
-                "Preconfigured subagent types, for spawn with type=<name> (its brief wins over the caller's; its model wins when it is allowed and can think at this session's level or lower. A model that is allowed but cannot think that low runs on the session's model instead; one that is not allowed, or unknown, is refused by the built-in. Its thinking and tools apply where the caller set none; its name is the instance name unless one is given; the started message names the model actually used):\n" +
+                "Preconfigured subagent types, for spawn with type=<name> (its brief wins over the caller's; its model wins when the allow-list has it and it can think at this session's level or lower. One the allow-list has, but which cannot think that low while the session's model is allowed too, runs on the session's model instead; one the allow-list lacks, or that is unknown, is refused by the built-in. Its thinking and tools apply where the caller set none; its name is the instance name unless one is given; the started message names the model actually used):\n" +
                 `${list}\n` +
                 "For non-trivial development work the intended order is architect (plan) → coder (implement) → reviewer (independent review), at most two review/fix cycles, then a report of what changed, what was run, and what is unresolved.\n" +
                 "Each type is a .md file — model, thinking, tools, description frontmatter and a markdown brief that is prepended to the first message — in .pi/agents/ (unless the project is distrusted) or .agents/agents/ (only in a trusted project) of the session folder, or ~/.pi/agent/agents/ (first match wins; edit or add files to change the types)."
