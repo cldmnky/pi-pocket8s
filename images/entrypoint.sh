@@ -83,12 +83,14 @@ prepare_directories() {
 # supporting OpenAI strict-mode tools, but the gateway's upstream rejects Pi's tool schemas in
 # strict mode, so every tool-using request to kimi-k3 fails with HTTP 400. Turning the flag off for
 # that model is the difference between an architect subagent that works and one that silently fails.
-# Pi reads models.json before the app starts (0.17.0's Refresh models re-reads the same file later), so
+# Pi reads models.json before the app starts (0.25.0's Refresh models re-reads the same file later), so
 # the override has to be in place before start.
 #
 # A workspace without the file gets the shipped copy. One that already has a models.json is merged
-# instead: the override is added only where it is missing, other keys are left alone, and a file that
-# does not parse — or a missing jq — is reported and left untouched rather than rewritten blind.
+# instead: every other key is left alone, and the one flag this fix is about —
+# opencode-go/kimi-k3's compat.supportsStrictMode — is forced to false even when the file says true,
+# because a workspace that turned it on would send the requests the gateway rejects. A file that does
+# not parse — or a missing jq — is reported and left untouched rather than rewritten blind.
 seed_pi_models() {
     local src="${PI_AGENT_SOURCE:-/usr/share/pi-agent}/models.json"
     local dest="${HOME_DIR}/.pi/agent/models.json"
@@ -345,14 +347,15 @@ sync_owner_url() {
     fi
 }
 
-# 0.17.0 adds an owner allow-list for subagent models (config.json subagentModels, empty by default):
-# a spawn may run on the session's own model or on one of that list, and nothing else. The shipped
-# types pin opencode-go models, so a fresh workspace would refuse architect/coder/reviewer. Allow
-# them through the app's own API — never by editing config.json — once per model: the marker records
-# what was seeded, so a model the owner later stops allowing in the Providers sheet stays stopped.
-# Delete the marker to seed the shipped models again. 0.17.0 writes config.json and listens before
-# its request handler is ready, answering 503 until then, so retry on 5xx and on no answer alike,
-# for one bounded minute shared by every model; this never fails boot.
+# 0.25.0's owner allow-list for subagent models (config.json subagentModels, empty by default) is what a
+# spawn may run on: while it is empty only the session's own model, and while it is nonempty only the
+# models it lists — the session's own included. The shipped types pin opencode-go models, so a fresh
+# workspace would refuse architect/coder/reviewer (and, with an empty list, any model but the session's).
+# Allow them through the app's own API — never by editing config.json — once per model: the marker
+# records what was seeded, so a model the owner later stops allowing in the Providers sheet stays
+# stopped. Delete the marker to seed the shipped models again. 0.25.0 writes config.json and listens
+# before its request handler is ready, answering 503 until then, so retry on 5xx and on no answer
+# alike, for one bounded minute shared by every model; this never fails boot.
 seed_subagent_models() {
     local launcher="${1:-}"
     local src="${PI_AGENT_SOURCE:-/usr/share/pi-agent}/agents"

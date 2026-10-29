@@ -2,7 +2,7 @@
 
 `images/Containerfile` builds `quay.io/cldmnky/pi-pocket`: upstream
 [pi-pocket](https://github.com/TannerMidd/pi-pocket) at pinned commit
-`26542deded0123d6b217828ed2f71f566d9a7a19` (v0.17.0) on UBI 10, plus an integrated
+`c65cf9957147e25268e91b0531039c0dc8c8587d` (v0.25.0) on UBI 10, plus an integrated
 developer toolchain. It runs as a fixed non-root user and keeps everything it writes on
 the volumes mounted at `/workspace/home` and `/workspace/repos`.
 
@@ -31,7 +31,7 @@ verified against the vendor's published SHA-256; RPMS are GPG-verified by `dnf`.
 | Component | Source |
 | --- | --- |
 | Base | `registry.access.redhat.com/ubi10/ubi:latest` (multi-arch, RHEL 10) |
-| Pi Pocket | upstream commit `26542ded…`, cloned and `git rev-parse`-verified in the build, `npm ci` from the committed lockfile (with dev dependencies) into `/opt/pi-pocket` |
+| Pi Pocket | upstream commit `c65cf99…`, cloned and `git rev-parse`-verified in the build, its `package.json` version checked against `PI_POCKET_VERSION`, `npm ci` from the committed lockfile (with dev dependencies) into `/opt/pi-pocket`. Its six direct `@earendil-works/*` packages are 1.4.0, and the extension API it loads is 1 to 2 |
 | Node | RHEL `nodejs24` (Node 24 + npm 11), exposed as `node`/`npm`/`npx` in `/usr/local/bin`; `node:sqlite` and `jiti` are runtime requirements |
 | Go | RHEL `golang` |
 | Python | RHEL `python3`, `python3-pip`, `python3-devel`, `venv` |
@@ -61,7 +61,8 @@ node /opt/pi-pocket/bin/pi-pocket.js \
 - **User**: fixed UID/GID `1000` (`pocket`), `HOME=/workspace/home`.
 - **Port**: `8787` (`PI_POCKET_PORT` can override).
 - **Working directory**: `/workspace/repos`; Pi Pocket uses it for new sessions.
-- **Data**: `/workspace/home/.pi-pocket` (`pocket.sqlite`, `config.json`, uploads, push keys).
+- **Data**: `/workspace/home/.pi-pocket` (`pocket.sqlite`, `config.json`, uploads, push keys,
+  `background/` logs).
 - **Configuration mount**: `/run/pocket-config` (the runtime Secret). `api-keys.json` is exported as the allow-listed provider environment variables; `web-search.json`, when present, is exported as `PI_WEB_SEARCH_CONFIG`, which points the agent's web-search configuration at the portal's choice.
 - **Signals**: the launcher is PID 1, so `SIGTERM` stops running work cleanly.
 - **Noninteractive**: the container has no TTY, so `--host 0.0.0.0` selects the LAN
@@ -90,6 +91,43 @@ names the portal's https origin (the chart sets it from the portal ingress):
 The patch is fail-closed: unless each pattern is found exactly as often as the
 pinned upstream commit has it (once / twice), nothing is modified and boot
 continues without embedding. `Secure` cookies still require HTTPS.
+
+### Built-in extensions
+
+The two modules this repository ships (`extensions/web-search.ts` and
+`extensions/agent-types.ts`, plus `extensions/_agent-types-policy.ts` as a
+helper the loader skips) are copied into `/opt/pi-pocket/src/server/extensions/`,
+where Pi Pocket loads its own built-ins from. They are written for **extension
+API 2** and declare `pocketApi = 2`, which is also why every tool result carries
+its parts in `output`: Pi Durable 1.2 renamed it from `content`, and Pi Pocket's
+shim for the old name applies to drop-ins only. The build calls the installed
+tools and fails if one answers with nothing usable.
+
+The `_agent-types-policy.ts` helper keeps its leading `_` so the loader's
+discovery (`.ts` files, not `*.test.ts`, not `_*`) does not treat it as a module.
+
+### Background tasks and the data volume
+
+Since 0.24 a `background` task runs its command in `bash`, keeps its output in
+segments cut with `split` under `<data>/background/<conversation>/`, and watches
+its processes through `/proc`; the image has bash, coreutils and the pod's
+`/proc`. The tasks live in the data folder, so they survive a server restart but
+not pod replacement (the chart's `Recreate` strategy replaces the pod on every
+upgrade), and a noisy long-lived task spends PVC space until it or its log is
+stopped.
+
+### Upgrades and backups
+
+Upgrade by rebuilding and redeploying the image. **Menu → Update Pi Pocket**
+(0.23) updates a git checkout and re-runs `npm ci`, and this image deletes
+`.git` after verifying the commit, so the updater has nothing to update; its
+release check is on by default and only the owner can turn it off (Menu →
+Extensions → Pi Pocket updates).
+
+0.21's change of SQLite schema (Pi Durable 1.4.0 opens version 2 and migrates) is
+one-way: before the first start on 0.25, stop the app and copy the whole data
+folder, and treat that copy as the rollback. An older image cannot open the
+migrated database.
 
 ### Web terminal daemon
 
@@ -157,13 +195,19 @@ start, which is also how updates reach an existing volume.
 
 At boot the entrypoint also copies the shipped subagent types (`~/.pi/agent/agents/`,
 copy-if-missing), and merges the `models.json` with the `kimi-k3` strict-mode override
-before the app starts. Pi Pocket 0.17.0's **Refresh models** re-reads that same file,
-so the override survives a refresh. Because a subagent may only run on its session's
-model or one the owner allowed in **Menu → Providers**, the entrypoint then allows the
-shipped types' models once per model through the app's API.
+before the app starts. Pi Pocket 0.25.0's **Refresh models** re-reads that same file, so
+the override survives a refresh. The merge leaves other keys alone but forces that one
+flag to `false`, even in a file that says `true`: a workspace with strict mode on again
+would send exactly the requests the gateway rejects.
+
+What a subagent may run on is the owner's allow-list in **Menu → Providers**, and
+0.25.0's rule is strict in both directions: an empty list means the session's own model
+only, a nonempty one means only the models it lists — the session's own included, so a
+spawn that names no model is refused while that model is off the list. The entrypoint
+therefore allows the shipped types' models once per model through the app's API.
 `~/.pi-pocket/.subagent-models-seeded` records what was seeded, so a model the owner
-stops allowing stays stopped; delete that file (and restart) to seed the shipped models
-again.
+stops allowing stays stopped across restarts; delete that file (and restart) to seed the
+shipped models again.
 
 ## Pod security profiles
 

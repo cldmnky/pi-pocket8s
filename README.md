@@ -4,7 +4,7 @@ A persistent [pi-pocket](https://github.com/TannerMidd/pi-pocket) coding workspa
 
 ## Architecture
 
-- `quay.io/cldmnky/pi-pocket`: upstream pi-pocket plus integrated developer tools. The base is `registry.access.redhat.com/ubi10/ubi:latest`, refreshed on image builds. Upstream source is pinned, not silently upgraded.
+- `quay.io/cldmnky/pi-pocket`: upstream pi-pocket plus integrated developer tools. The base is `registry.access.redhat.com/ubi10/ubi:latest`, refreshed on image builds. Upstream source is pinned (v0.25.0, commit `c65cf99…`) and verified in the build, not silently upgraded; upgrading means building and deploying a new image.
 - `quay.io/cldmnky/pi-pocket-portal`: Go HTTP server with an embedded, dependency-free SPA, using a separate service account.
 - `charts/pi-pocket`: one pi-pocket replica with `Recreate` updates, a retained PVC mounted at `/workspace`, namespace RBAC, user namespaces, services, ingresses and ingress NetworkPolicy.
 - `/workspace/repos`: repositories. `/workspace/home`: persistent home, pi-pocket SQLite/settings, Pi provider logins, caches and SSH configuration.
@@ -345,19 +345,25 @@ workflow, and what has no equivalent here
 
 Models are per-deployment: the shipped files use the OpenCode Go models the workflow was designed
 around, and the type's `thinking` level must be one the model offers (the model picker lists them;
-`mimo-v2.6-pro` offers up to `high`, while `deepseek-v4.1-flash` and `glm-5.3` offer `low`,
-`high`, and `max`). When a type's model is allowed but cannot think at the session's level or lower, the
-subagent runs on the session's model, and the started message names the model actually used; a model
-that is not allowed, or is unknown, is refused. That is why `architect` works from any session: it
-uses `mimo-v2.6-pro` at `high` and the session's model otherwise. Nothing here is specific to OpenCode: point
+`mimo-v2.6-pro` offers up to `high`, while `deepseek-v4.1-flash` and `glm-5.3` offer `low`, `high`, and
+`max`). Pi Pocket 0.25 lowers a requested level to the nearest the model supports below it, rather
+than refusing the model. When a type's model cannot think at the session's level or lower, the
+subagent runs on the session's model instead, and the started message names the model actually used —
+but only while both models are allowed (see below); a model the allow-list lacks, or an unknown one,
+is refused by the built-in, never quietly replaced. That is why `architect` works from any session: its
+`mimo-v2.6-pro` model supports the session's levels, with the type requesting `high`. Nothing here is
+specific to OpenCode: point
 a type at any model the install is signed in to.
 
-What a subagent may run on is the owner's call: a spawn uses the session's own model, or one allowed
-for subagents in **Menu → Providers** — anything else is refused. The entrypoint therefore allows the
-shipped types' models once per workspace through the app's own API, so `architect`, `coder`, and
-`reviewer` work on a fresh install; if a type's model cannot think at the session's level, it falls
-back to the session's model rather than failing. A model the owner stops allowing there stays
-stopped: only models that were never seeded are added again. To seed the shipped models again, delete
+What a subagent may run on is the owner's call, in **Menu → Providers**, and the rule is strict in
+both directions: with no model allowed, a subagent runs only on its session's own model; with a list,
+only on the models on it — the session's own included, so a spawn that names no model is refused while
+that model is off the list. The entrypoint therefore allows the shipped types' models once per
+workspace through the app's own API, so `architect`, `coder`, and `reviewer` work on a fresh install.
+If a type's model cannot think at the session's level, it falls back to the session's model rather
+than failing — but only when the session's model is allowed too, because the built-in would otherwise
+refuse the fallback as well. A model the owner stops allowing there stays stopped across restarts:
+only models that were never seeded are added again. To seed the shipped models again, delete
 `~/.pi-pocket/.subagent-models-seeded` and restart.
 
 Two things about subagents are worth knowing, because both looked like "the subagent never answered":
@@ -365,9 +371,9 @@ Two things about subagents are worth knowing, because both looked like "the suba
 - **A subagent whose run fails may report nothing at all.** A failure normally comes back as
   `[subagent <name> failed: …]` — three of three failed probes did on the older code. The one that
   went silent was the one a *second* message had been sent to after its run had already failed: its
-  reporter waited for an answer that could not come, and *Running now* said so. That is the case the
-  pinned upstream (0.17.0) reworks — the message is withdrawn and the failure reported through a
-  courier, instead of a submission that can wait for good. Either way a report is a message to the
+  reporter waited for an answer that could not come, and *Running now* said so. 0.17.0 reworked that
+  case and the pinned upstream (0.25.0) keeps it — the message is withdrawn and the failure reported
+  through a courier, instead of a submission that can wait for good. Either way a report is a message to the
   parent, delivered at the parent's next pause: while the parent is in the middle of a long turn, a
   report that was already sent still looks like silence, and then arrives with the others. If a
   subagent seems silent, ask for `status` or open its conversation: a failed run is in its transcript
@@ -377,7 +383,8 @@ Two things about subagents are worth knowing, because both looked like "the suba
   mode, so every tool-using request to it failed with HTTP 400 — an architect subagent that could
   never answer. The image ships a `models.json` that turns that flag off for the one model
   (`pi-agent/models.json`, seeded into `~/.pi/agent/models.json`; an existing file is merged, not
-  replaced). Remove the override once upstream's catalog stops claiming strict mode.
+  replaced, and that one flag is forced to `off` even in a file that turned it back on). Remove the
+  override once upstream's catalog stops claiming strict mode.
 
 ## Development tools and cluster access
 
@@ -394,6 +401,12 @@ One server process owns SQLite. Do not scale above one; the chart rejects it. `R
 The runtime Secret and portal token use Helm `lookup` to preserve portal edits and token values across connected upgrades. An **offline `helm template`/GitOps render cannot discover existing credentials** and emits fresh defaults: use `runtimeSecret.existingSecret` and `portal.tokenSecret` with externally managed Secrets for GitOps. Do not apply offline renders over a live installation's generated Secrets.
 
 PVC and generated credential Secrets have `helm.sh/resource-policy: keep`. Uninstall retains them intentionally. Reinstallation can adopt retained Helm-owned resources for the same release; alternatively set `persistence.existingClaim`, `runtimeSecret.existingSecret` and `portal.tokenSecret`. Deleting the namespace still deletes its resources; the LVMS StorageClass has a Delete reclaim policy. Back up the workspace outside the namespace. Stop the application before filesystem-level copies, or use a SQLite-consistent backup/snapshot procedure.
+
+**Upgrading the packaged app is a new image.** Deploying this chart upgrades Pi Pocket by replacing the image, not by **Menu → Update Pi Pocket**: that updater (0.23) works on a git checkout and this image deletes `.git` after verifying the pinned commit, so there is nothing for it to update. Its release check is on by default and only the owner can turn it off (Menu → Extensions → Pi Pocket updates).
+
+**0.21's database migration is one-way.** Pi Pocket 0.21 moved SQLite to Pi Durable's schema version 2 when it opens the database, and an older build cannot open the migrated file. Before the first start on 0.25, stop the application and copy the whole data folder (`/workspace/home/.pi-pocket` — the database, `config.json`, and the rest); that copy is the rollback, because putting an older image back on the migrated volume does not work.
+
+**Background tasks write to the PVC.** The `background` tool (0.24) keeps each task's output under `<data>/background/`. The tasks survive a server restart but not pod replacement, and a noisy task keeps spending PVC space until it ends or is stopped.
 
 To rotate portal access, replace the token Secret value with a cryptographically strong random token; reload the portal after the projected Secret update. Rotate pi-pocket's owner token using the upstream launcher `--rotate-token` operation, with the original database offline and the same persistent data directory. Rotating an owner token does not remove all existing invited users; remove users in the People menu as needed.
 

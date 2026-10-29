@@ -52,7 +52,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Optional extra tag for the published images (e.g. 0.17.0). Never latest."
+        description: "Optional extra tag for the published images (e.g. 0.25.0). Never latest."
         required: false
         default: ""
         type: string
@@ -206,10 +206,11 @@ jobs:
             exit 1
           fi
 
-          # 0.17.0 lets a subagent run only on its session's model or one the owner allowed for
-          # subagents. The entrypoint seeds the shipped types' models through the app's API, which
-          # may answer 503 for a moment after readiness, so poll both config.json and the log for 30
-          # turns. The assertion still requires all three models and all three grant lines.
+          # The owner's allow-list for subagent models, with 0.25.0's meaning: an empty list lets a subagent run only
+          # on its session's model, a nonempty one only on the models it lists — the session's own included. The
+          # entrypoint seeds the shipped types' models through the app's API, which may answer 503 for a moment after
+          # readiness, so poll both config.json and the log for 30 turns. The assertion still requires all three
+          # models and all three grant lines.
           seeded=0
           for _ in $(seq 1 30); do
             logs="$(sudo podman logs smoke 2>&1)"
@@ -230,6 +231,66 @@ jobs:
             echo "::error::the entrypoint did not allow the shipped subagent models"
             exit 1
           fi
+
+          # The subagent-model route the entrypoint seeds through, called directly, because the spawn path and the
+          # seeding both depend on it: it needs a signed-in person (401 without the owner token), the app's own
+          # header (403 without X-Pocket), a JSON body it can read (400), and granting a model that is already
+          # allowed answers 200 with the whole list rather than growing it.
+          seed_url="http://127.0.0.1:8787/api/subagent-models"
+          seed_body='{"model":"opencode-go/glm-5.3","allowed":true}'
+          status="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+            -H 'X-Pocket: 1' --data "${seed_body}" "${seed_url}" || true)"
+          if [ "${status}" != "401" ]; then
+            echo "::error::the subagent-model route is open without a sign-in (status ${status:-none})"
+            exit 1
+          fi
+          status="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer ${token}" \
+            -H 'Content-Type: application/json' --data "${seed_body}" "${seed_url}" || true)"
+          if [ "${status}" != "403" ]; then
+            echo "::error::the subagent-model route answered ${status:-none} without the X-Pocket header, not 403"
+            exit 1
+          fi
+          status="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer ${token}" \
+            -H 'Content-Type: application/json' -H 'X-Pocket: 1' --data '{' "${seed_url}" || true)"
+          if [ "${status}" != "400" ]; then
+            echo "::error::the subagent-model route answered ${status:-none} to a malformed body, not 400"
+            exit 1
+          fi
+          for attempt in 1 2; do
+            status="$(curl -sS -o /tmp/seed-grant.json -w '%{http_code}' -X POST -H "Authorization: Bearer ${token}" \
+              -H 'Content-Type: application/json' -H 'X-Pocket: 1' --data "${seed_body}" "${seed_url}" || true)"
+            if [ "${status}" != "200" ]; then
+              echo "::error::granting an allowed model answered ${status:-none} on attempt ${attempt}, not 200"
+              exit 1
+            fi
+            if ! jq -e '.subagentModels | index("opencode-go/glm-5.3") != null' /tmp/seed-grant.json >/dev/null; then
+              echo "::error::the grant answer does not carry the model in subagentModels"
+              cat /tmp/seed-grant.json || true
+              exit 1
+            fi
+          done
+
+          # The two shipped modules as the running app itself reports them, through its owner API. The loader lists
+          # what it discovered: both modules on, built-in, with no load error, each with what it installed.
+          # `_agent-types-policy.ts` is a helper beside agent-types.ts and not a module, so the list must not have it.
+          extensions_json="$(curl -sS -H "Authorization: Bearer ${token}" http://127.0.0.1:8787/api/extensions)"
+          if ! jq -e '
+            (.modules | map(.file)) as $files
+            | [(.modules[] | select(.file == "web-search.ts"))] as $ws
+            | [(.modules[] | select(.file == "agent-types.ts"))] as $at
+            | ($files | index("_agent-types-policy.ts")) == null
+              and ($ws | length) == 1 and $ws[0].source == "built-in" and $ws[0].enabled == true and ($ws[0].error == null)
+              and ($at | length) == 1 and $at[0].source == "built-in" and $at[0].enabled == true and ($at[0].error == null)
+              and ([$ws[0].extensions[] | select(.name == "pocket-web-search") | .tools[]] | sort)
+                == ["web_fetch", "web_search", "web_search_config"]
+              and ([$at[0].extensions[] | select(.name == "agent-types") | .wraps[]] | sort)
+                == ["section subagents", "tool subagent"]
+          ' <<<"${extensions_json}" >/dev/null; then
+            echo "::error::the shipped extensions are not loaded as built-ins with their tools and wraps"
+            jq '.modules | map({file, source, enabled, error, extensions})' <<<"${extensions_json}" || true
+            exit 1
+          fi
+
           if grep -qF "${token}" <<<"${logs}"; then
             echo "::error::the owner token leaked into the container log"
             exit 1
@@ -302,7 +363,7 @@ jobs:
 
           # The kimi-k3 strict-mode fix the image ships: the merge happens before the app starts, so
           # a workspace without it sends strict-mode tool schemas to a gateway that rejects them, and
-          # every tool-using request to that model fails with HTTP 400. 0.17.0's Refresh models
+          # every tool-using request to that model fails with HTTP 400. 0.25.0's Refresh models
           # re-reads the same seeded file.
           sudo podman exec smoke test -f /workspace/home/.pi/agent/models.json
           sudo podman exec smoke jq -e '.providers["opencode-go"].modelOverrides["kimi-k3"].compat.supportsStrictMode == false' /workspace/home/.pi/agent/models.json
@@ -330,6 +391,56 @@ jobs:
           sudo podman exec smoke kubectl version --client
           sudo podman exec smoke helm version
           sudo podman exec smoke oc version --client
+
+          # The background tool 0.24 ships: a task runs in bash, its log is cut into segments with `split` (both
+          # coreutils packages, but an image that trimmed them would only fail at the first long build), and the
+          # server watches the task's processes through /proc.
+          sudo podman exec smoke bash -c 'test -x "$(command -v bash)" && test -x "$(command -v split)"'
+          sudo podman exec smoke test -r /proc/self/stat
+
+          # A model the owner stops allowing stays stopped. The entrypoint records what it seeded in
+          # .subagent-models-seeded and never grants a model again, so a restart on the same volumes must not put
+          # the revoked one back. Revoke one seeded model, restart, and check the config, the marker, and that the
+          # server came back.
+          revoke_url="http://127.0.0.1:8787/api/subagent-models"
+          status="$(curl -sS -o /tmp/revoke.json -w '%{http_code}' -X POST -H "Authorization: Bearer ${token}" \
+            -H 'Content-Type: application/json' -H 'X-Pocket: 1' \
+            --data '{"model":"opencode-go/glm-5.3","allowed":false}' "${revoke_url}" || true)"
+          if [ "${status}" != "200" ]; then
+            echo "::error::revoking a seeded subagent model answered ${status:-none}, not 200"
+            exit 1
+          fi
+          if ! sudo podman exec smoke jq -e '(.subagentModels // []) | index("opencode-go/glm-5.3") == null' \
+              /workspace/home/.pi-pocket/config.json >/dev/null; then
+            echo "::error::the revoked model is still in subagentModels before the restart"
+            exit 1
+          fi
+          sudo podman exec smoke grep -qx 'opencode-go/glm-5.3' /workspace/home/.pi-pocket/.subagent-models-seeded \
+            || { echo "::error::the seeding marker lost the revoked model, so a restart would grant it again"; exit 1; }
+
+          sudo podman restart smoke >/dev/null
+          ready=0
+          for _ in $(seq 1 60); do
+            if [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8787/ || true)" = "200" ]; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          sudo podman logs smoke || true
+          if [ "${ready}" != "1" ]; then
+            echo "::error::pi-pocket did not come back on :8787 after a restart"
+            exit 1
+          fi
+          if ! sudo podman exec smoke jq -e '(.subagentModels // [])
+              | (index("opencode-go/glm-5.3") == null)
+                and (index("opencode-go/kimi-k3") != null)
+                and (index("opencode-go/deepseek-v4.1-flash") != null)' \
+              /workspace/home/.pi-pocket/config.json >/dev/null; then
+            sudo podman exec smoke jq '.subagentModels // []' /workspace/home/.pi-pocket/config.json || true
+            echo "::error::the restart did not keep the revoked model revoked, or lost the other seeded ones"
+            exit 1
+          fi
 
       - name: Clean up the smoke container
         if: always() && github.event_name == 'pull_request' && matrix.image == 'pi-pocket' && matrix.platform == 'linux/amd64'
