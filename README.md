@@ -325,7 +325,7 @@ extension teaches the built-in `subagent` tool to apply one when it spawns with 
 
 | Type | Model | What it is for |
 | --- | --- | --- |
-| `architect` | `opencode-go/kimi-k3` | Requirements, design, risks, acceptance criteria, an ordered plan. No `write`/`edit`. |
+| `architect` | `opencode-go/mimo-v2.6-pro` | Requirements, design, risks, acceptance criteria, an ordered plan. No `write`/`edit`. |
 | `coder` | `opencode-go/deepseek-v4.1-flash` | Implements the plan, writes tests, runs them, fixes failures. |
 | `reviewer` | `opencode-go/glm-5.3` | Verifies the change against the requirements; findings by severity. No `write`/`edit`. |
 
@@ -345,13 +345,14 @@ workflow, and what has no equivalent here
 
 Models are per-deployment: the shipped files use the OpenCode Go models the workflow was designed
 around, and the type's `thinking` level must be one the model offers (the model picker lists them;
-`kimi-k3` offers only `max`, while `deepseek-v4.1-flash` and `glm-5.3` offer `low`, `high`, and
+`mimo-v2.6-pro` offers up to `high`, while `deepseek-v4.1-flash` and `glm-5.3` offer `low`, `high`, and
 `max`). Pi Pocket 0.25 lowers a requested level to the nearest the model supports below it, rather
 than refusing the model. When a type's model cannot think at the session's level or lower, the
 subagent runs on the session's model instead, and the started message names the model actually used —
 but only while both models are allowed (see below); a model the allow-list lacks, or an unknown one,
-is refused by the built-in, never quietly replaced. That is why `architect` works from any session: it
-uses `kimi-k3` at max and the session's model otherwise. Nothing here is specific to OpenCode: point
+is refused by the built-in, never quietly replaced. That is why `architect` works from any session: its
+`mimo-v2.6-pro` model supports the session's levels, with the type requesting `high`. Nothing here is
+specific to OpenCode: point
 a type at any model the install is signed in to.
 
 What a subagent may run on is the owner's call, in **Menu → Providers**, and the rule is strict in

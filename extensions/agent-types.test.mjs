@@ -15,7 +15,7 @@ const DIR = fileURLToPath(new URL("./agent-types/", import.meta.url));
 const TOOLS = new Set(["read", "write", "edit", "bash", "artifact", "browser", "subagent", "schedule", "codemode", "web_search"]);
 const LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 /** The models the three roles are built on: the OpenCode Go subscription the workspace has. */
-const MODELS = { architect: "opencode-go/kimi-k3", coder: "opencode-go/deepseek-v4.1-flash", reviewer: "opencode-go/glm-5.3" };
+const MODELS = { architect: "opencode-go/mimo-v2.6-pro", coder: "opencode-go/deepseek-v4.1-flash", reviewer: "opencode-go/glm-5.3" };
 
 function parse(text) {
     const lines = text.split(/\r?\n/);

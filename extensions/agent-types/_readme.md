@@ -30,7 +30,7 @@ tools, or instructions — no restart needed: the next spawn sees the change.
 
 | Type | Model | What it is for |
 | --- | --- | --- |
-| `architect` | `opencode-go/kimi-k3` | Requirements, design, risks, acceptance criteria, an ordered plan. Writes nothing. |
+| `architect` | `opencode-go/mimo-v2.6-pro` | Requirements, design, risks, acceptance criteria, an ordered plan. Writes nothing. |
 | `coder` | `opencode-go/deepseek-v4.1-flash` | Implements the plan, writes tests, runs them, fixes failures. |
 | `reviewer` | `opencode-go/glm-5.3` | Verifies the change against the requirements. Writes nothing. |
 
