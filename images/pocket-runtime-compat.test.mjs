@@ -1,6 +1,6 @@
 // What the image's copy of upstream Pi Pocket must be, checked where that copy lives.
 //
-// It is the part of the 0.25.0 pin a grep of the Containerfile cannot prove: the checkout's own version, the Pi
+// It is the part of the 0.26.0 pin a grep of the Containerfile cannot prove: the checkout's own version, the Pi
 // packages the shipped extensions are written against, the extension API level the application loads, and that the
 // shipped models.json actually turns kimi-k3's strict-mode flag off once Pi has merged it.
 //
@@ -18,8 +18,8 @@ import { pathToFileURL } from "node:url";
 /** The application as the image installs it: `/opt/pi-pocket`, named by `POCKET_APP_DIR`. */
 const APP = process.env.POCKET_APP_DIR;
 /** The version the Containerfile pins (`PI_POCKET_VERSION`); a bump changes both. */
-const VERSION = "0.25.0";
-/** The Pi packages the extensions import; 0.25.0 ships 1.4.0 of each as a direct dependency. */
+const VERSION = "0.26.0";
+/** The Pi packages the extensions import; 0.26.0 ships 1.4.0 of each as a direct dependency. */
 const PACKAGES = [
     "@earendil-works/chord",
     "@earendil-works/pi-ai",
@@ -57,7 +57,7 @@ function modelsPath() {
     return process.env.POCKET_MODELS_JSON ?? join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "models.json");
 }
 
-test("the checkout is the pinned 0.25.0 release", { skip }, () => {
+test("the checkout is the pinned 0.26.0 release", { skip }, () => {
     assert.equal(manifest(join(APP, "package.json")).version, VERSION);
 });
 

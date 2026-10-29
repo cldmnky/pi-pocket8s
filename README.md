@@ -4,7 +4,7 @@ A persistent [pi-pocket](https://github.com/TannerMidd/pi-pocket) coding workspa
 
 ## Architecture
 
-- `quay.io/cldmnky/pi-pocket`: upstream pi-pocket plus integrated developer tools. The base is `registry.access.redhat.com/ubi10/ubi:latest`, refreshed on image builds. Upstream source is pinned (v0.25.0, commit `c65cf99…`) and verified in the build, not silently upgraded; upgrading means building and deploying a new image.
+- `quay.io/cldmnky/pi-pocket`: upstream pi-pocket plus integrated developer tools. The base is `registry.access.redhat.com/ubi10/ubi:latest`, refreshed on image builds. Upstream source is pinned (v0.26.0, commit `5e13a8b…`) and verified in the build, not silently upgraded; upgrading means building and deploying a new image.
 - `quay.io/cldmnky/pi-pocket-portal`: Go HTTP server with an embedded, dependency-free SPA, using a separate service account.
 - `charts/pi-pocket`: one pi-pocket replica with `Recreate` updates, a retained PVC mounted at `/workspace`, namespace RBAC, user namespaces, services, ingresses and ingress NetworkPolicy.
 - `/workspace/repos`: repositories. `/workspace/home`: persistent home, pi-pocket SQLite/settings, Pi provider logins, caches and SSH configuration.
@@ -372,7 +372,7 @@ Two things about subagents are worth knowing, because both looked like "the suba
   `[subagent <name> failed: …]` — three of three failed probes did on the older code. The one that
   went silent was the one a *second* message had been sent to after its run had already failed: its
   reporter waited for an answer that could not come, and *Running now* said so. 0.17.0 reworked that
-  case and the pinned upstream (0.25.0) keeps it — the message is withdrawn and the failure reported
+  case and the pinned upstream (0.26.0) keeps it — the message is withdrawn and the failure reported
   through a courier, instead of a submission that can wait for good. Either way a report is a message to the
   parent, delivered at the parent's next pause: while the parent is in the middle of a long turn, a
   report that was already sent still looks like silence, and then arrives with the others. If a

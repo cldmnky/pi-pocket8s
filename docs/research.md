@@ -10,7 +10,7 @@
 
 Upstream was inspected directly at commit `55849dd3769f1cc265404443193c1ab4385aeedb` (`0.11.0`); the move to `e1298a0e8e674211d37ef71ecabef0ec8a9af13c` (`0.12.2`) re-checked the surfaces this packaging depends on — the launcher and lockfile, the two lines the portal-embed patch rewrites, the extension loader and host interface, and the subagent tool two shipped extensions build on. The re-pin to `26542deded0123d6b217828ed2f71f566d9a7a19` (`0.17.0`) re-checked the same surfaces: launcher flags (`--host`, `--port`, `--cwd`, `--data`), the embed-patch lines (`frame-ancestors 'self'` once, `SameSite=Lax` twice), the extension loader and host interface, the subagent tool plus the owner's new allow-list for other models (`subagentModels`), and the courier marker `pocket.subagent-courier`. It adds one runtime dependency, `@earendil-works/pi-mcp`, which the existing `npm ci` from the committed lockfile installs; no new system package is needed. It contains a lockfile and launches through `bin/pi-pocket.js`; the server is not a static frontend. It persists SQLite and settings, has an owner sign-in key, and already implements scoped invites and owner/steer/view access. Its CLI supports explicit host, port, working and data directories. That avoids an interactive launcher in Kubernetes. Forwarded HTTPS headers are used for external URLs and secure cookies.
 
-Current pin: `c65cf9957147e25268e91b0531039c0dc8c8587d` (`0.25.0`). What that re-pin re-checked, and what it required of this packaging, is in [Re-pin to 0.25.0](#re-pin-to-0250-2026-10-26).
+Current pin: `5e13a8b161226cbfef3e696c1bd31b8da110e381` (`0.26.0`). What each re-pin re-checked, and what it required of this packaging, is in [Re-pin to 0.26.0](#re-pin-to-0260-2026-10-29) and [Re-pin to 0.25.0](#re-pin-to-0250-2026-10-26).
 
 ## Why a separate portal
 
@@ -297,3 +297,50 @@ against their types.
   `/proc`: the image has all three (bash and coreutils from UBI, `/proc` from the
   pod). Logs live under `<data>/background/` on the PVC, so they survive a server
   restart but not pod replacement, and a long-lived noisy task spends PVC space.
+
+## Re-pin to 0.26.0 (2026-10-29)
+
+The pin moved from `c65cf9957147e25268e91b0531039c0dc8c8587d` (`0.25.0`) to
+`5e13a8b161226cbfef3e696c1bd31b8da110e381` (tag `v0.26.0`). This one is close
+to a pin-only bump: the files this packaging patches or wraps were diffed between
+the two commits, and only additive changes were found.
+
+- **Launcher and lockfile — unchanged.** `bin/pi-pocket.js` and
+  `src/launcher/options.ts` are identical between the two commits, so `--host`,
+  `--port`, `--cwd` and `--data` are still parsed as the entrypoint invokes
+  them. The checkout carries its lockfile, `package.json` still declares
+  `node >=22.19` (the image has Node 24), and the six direct
+  `@earendil-works/*` dependencies remain `1.4.0`, so no dependency or system
+  package changed.
+- **Portal-embed patch — unchanged.** `src/server/http/assets.ts` and
+  `src/server/auth.ts` are byte-identical between the two commits, so
+  `images/embed-patch.sh` still finds one `frame-ancestors 'self'` and two
+  `SameSite=Lax`, and its exact-count guards still apply. Confirmed again from
+  the running container: the CSP line and both cookie sites are patched.
+- **Extension loader — additive.** `reload.ts` gains `design.ts` in `ORDER` and
+  `TITLES`, and reserves three new built-in tool names
+  (`design_preview`, `design_export`, `design_system`). Discovery is otherwise
+  the same: top-level `.ts` files not named in `ORDER` are still loaded after
+  it, and `*.test.ts` and `_`-prefixed files are still skipped, so
+  `web-search.ts` and `agent-types.ts` load and `_agent-types-policy.ts` stays
+  out of the list. Neither shipped module uses a reserved name.
+- **Host interface — unchanged.** `src/server/host.ts` is identical, so the
+  members both extensions use (`notice`, `agentDir`, `dataDir`, `resolveModel`,
+  `requesterOf`, `skillPaths`, `subagentModels`, `modelInfo`) are the same.
+  `POCKET_API` is still `2`, and the drop-in-only `content`→`output` shim is
+  unchanged; both modules already answer `output`.
+- **Subagent tool — same contract, plus plan mode.** The tool name and the
+  `subagents` section key are unchanged, and the model rule is untouched (an
+  empty `subagentModels` list still means the session's own model only, so the
+  entrypoint's allow-list seeding keeps working through the same
+  `POST /api/subagent-models`). The one change is that a subagent spawned while
+  plan mode is on now inherits it.
+- **`Refresh models` still reads `models.json`.** `src/server/model-refresh.ts`
+  re-reads the same file through Pi's loader, so the entrypoint's `kimi-k3`
+  strict-mode merge is still picked up by a refresh.
+- **Removed route module, not used here.** `src/server/http/public.ts` is gone
+  (public bundle routes moved); this packaging never referenced it.
+
+Unchanged behaviour that the docs already record therefore keeps its wording,
+with the pinned version updated: the subagent allow-list's strictness in both
+directions, the models-file refresh, and the one-way SQLite schema migration.
