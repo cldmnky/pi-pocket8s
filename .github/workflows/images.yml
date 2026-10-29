@@ -24,7 +24,7 @@ on:
   pull_request:
     paths:
       - ".dockerignore"
-      - ".github/workflows/images.yml"
+      - ".github/workflows/**"
       - "extensions/**"
       - "images/**"
       - "portal/**"
@@ -34,7 +34,7 @@ on:
       - main
     paths:
       - ".dockerignore"
-      - ".github/workflows/images.yml"
+      - ".github/workflows/**"
       - "extensions/**"
       - "images/**"
       - "portal/**"
@@ -391,6 +391,30 @@ jobs:
           sudo podman exec smoke kubectl version --client
           sudo podman exec smoke helm version
           sudo podman exec smoke oc version --client
+
+          # The toolchain the image adds beyond UBI's RPMs. Each pinned download must run, yq must
+          # evaluate an expression rather than only print a version, and the two shell scripts plus
+          # every workflow the repository ships must pass their own linters inside the image — the
+          # last is why this job runs on workflow edits at all.
+          sudo podman exec smoke yq --version
+          sudo podman exec smoke sh -c 'printf "a: 1\n" | yq -e ".a == 1"'
+          sudo podman exec smoke shellcheck --version
+          sudo podman exec smoke shellcheck /usr/local/bin/pi-pocket-entrypoint /usr/local/bin/pi-pocket-embed-patch
+          sudo podman exec smoke actionlint -version
+          sudo podman cp .github/workflows smoke:/tmp/workflows
+          # Both workflow extensions, so a *.yaml added later cannot escape the lint. find exits
+          # non-zero when actionlint reports a finding; the guard catches an empty directory.
+          sudo podman exec smoke sh -c 'test -n "$(ls /tmp/workflows/*.yml /tmp/workflows/*.yaml 2>/dev/null)"'
+          sudo podman exec smoke find /tmp/workflows \( -name '*.yml' -o -name '*.yaml' \) -exec actionlint {} +
+          sudo podman exec smoke sqlite3 :memory: 'select 1'
+          sudo podman exec smoke ncat --version
+          sudo podman exec smoke sh -c 'test -x /usr/bin/nc'
+          sudo podman exec smoke socat -V
+          sudo podman exec smoke fd --version
+          sudo podman exec smoke bat --version
+          sudo podman exec smoke delta --version
+          sudo podman exec smoke uv --version
+          sudo podman exec smoke uvx --version
 
           # The background tool 0.24 ships: a task runs in bash, its log is cut into segments with `split` (both
           # coreutils packages, but an image that trimmed them would only fail at the first long build), and the
