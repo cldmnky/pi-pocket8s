@@ -14,7 +14,7 @@ ARG BASE_IMAGE=registry.access.redhat.com/ubi10/ubi:latest
 FROM ${BASE_IMAGE} AS source
 
 ARG PI_POCKET_REPOSITORY=https://github.com/TannerMidd/pi-pocket.git
-ARG PI_POCKET_COMMIT=c65cf9957147e25268e91b0531039c0dc8c8587d
+ARG PI_POCKET_COMMIT=5e13a8b161226cbfef3e696c1bd31b8da110e381
 
 RUN set -eux; \
     dnf install -y --setopt=install_weak_deps=False git \
@@ -51,8 +51,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)}
 # ── runtime image ─────────────────────────────────────────────────────────────────
 FROM ${BASE_IMAGE}
 
-ARG PI_POCKET_VERSION=0.25.0
-ARG PI_POCKET_COMMIT=c65cf9957147e25268e91b0531039c0dc8c8587d
+ARG PI_POCKET_VERSION=0.26.0
+ARG PI_POCKET_COMMIT=5e13a8b161226cbfef3e696c1bd31b8da110e381
 ARG TARGETARCH
 
 ARG RIPGREP_VERSION=15.2.0

@@ -2,7 +2,7 @@
 
 `images/Containerfile` builds `quay.io/cldmnky/pi-pocket`: upstream
 [pi-pocket](https://github.com/TannerMidd/pi-pocket) at pinned commit
-`c65cf9957147e25268e91b0531039c0dc8c8587d` (v0.25.0) on UBI 10, plus an integrated
+`5e13a8b161226cbfef3e696c1bd31b8da110e381` (v0.26.0) on UBI 10, plus an integrated
 developer toolchain. It runs as a fixed non-root user and keeps everything it writes on
 the volumes mounted at `/workspace/home` and `/workspace/repos`.
 
@@ -195,13 +195,13 @@ start, which is also how updates reach an existing volume.
 
 At boot the entrypoint also copies the shipped subagent types (`~/.pi/agent/agents/`,
 copy-if-missing), and merges the `models.json` with the `kimi-k3` strict-mode override
-before the app starts. Pi Pocket 0.25.0's **Refresh models** re-reads that same file, so
+before the app starts. Pi Pocket 0.26.0's **Refresh models** re-reads that same file, so
 the override survives a refresh. The merge leaves other keys alone but forces that one
 flag to `false`, even in a file that says `true`: a workspace with strict mode on again
 would send exactly the requests the gateway rejects.
 
 What a subagent may run on is the owner's allow-list in **Menu → Providers**, and
-0.25.0's rule is strict in both directions: an empty list means the session's own model
+0.26.0's rule is strict in both directions: an empty list means the session's own model
 only, a nonempty one means only the models it lists — the session's own included, so a
 spawn that names no model is refused while that model is off the list. The entrypoint
 therefore allows the shipped types' models once per model through the app's API.
