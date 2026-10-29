@@ -10,6 +10,8 @@
 
 Upstream was inspected directly at commit `55849dd3769f1cc265404443193c1ab4385aeedb` (`0.11.0`); the move to `e1298a0e8e674211d37ef71ecabef0ec8a9af13c` (`0.12.2`) re-checked the surfaces this packaging depends on — the launcher and lockfile, the two lines the portal-embed patch rewrites, the extension loader and host interface, and the subagent tool two shipped extensions build on. The re-pin to `26542deded0123d6b217828ed2f71f566d9a7a19` (`0.17.0`) re-checked the same surfaces: launcher flags (`--host`, `--port`, `--cwd`, `--data`), the embed-patch lines (`frame-ancestors 'self'` once, `SameSite=Lax` twice), the extension loader and host interface, the subagent tool plus the owner's new allow-list for other models (`subagentModels`), and the courier marker `pocket.subagent-courier`. It adds one runtime dependency, `@earendil-works/pi-mcp`, which the existing `npm ci` from the committed lockfile installs; no new system package is needed. It contains a lockfile and launches through `bin/pi-pocket.js`; the server is not a static frontend. It persists SQLite and settings, has an owner sign-in key, and already implements scoped invites and owner/steer/view access. Its CLI supports explicit host, port, working and data directories. That avoids an interactive launcher in Kubernetes. Forwarded HTTPS headers are used for external URLs and secure cookies.
 
+Current pin: `c65cf9957147e25268e91b0531039c0dc8c8587d` (`0.25.0`). What that re-pin re-checked, and what it required of this packaging, is in [Re-pin to 0.25.0](#re-pin-to-0250-2026-10-26).
+
 ## Why a separate portal
 
 Upstream covers application invitations/roles but not provisioning namespace Secrets or controlling a Deployment. The small portal owns only a named configuration Secret and named Deployment. It avoids holding provider keys in its own PVC, never returns stored provider key values, uses optimistic concurrency, and uses a separate bearer credential. The portal is not a substitute for pi-pocket's identity system and cannot provide namespace isolation from the admin-enabled coding agent.
@@ -216,3 +218,82 @@ Non-text bodies (images, PDFs, archives) are reported by content type and size
 instead of returned: no decoding is claimed for a format the module does not
 understand. `robots.txt` is not consulted — this is the same GET the shell could
 make, and it identifies itself with a plain `pi-pocket-web-fetch` user agent.
+
+## Re-pin to 0.25.0 (2026-10-26)
+
+The pin moved from `26542deded0123d6b217828ed2f71f566d9a7a19` (`0.17.0`) to
+`c65cf9957147e25268e91b0531039c0dc8c8587d` (tag `v0.25.0`). It is not a
+pin-only bump: changes between 0.19 and 0.25 break what this packaging ships, so
+each surface was re-checked against a clone with its own `npm ci`, and the
+shipped extensions were run against the real 1.4.0 packages rather than read
+against their types.
+
+- **Launcher and lockfile — unchanged.** `bin/pi-pocket.js` still imports
+  `strip-types.js` and then `src/launcher/main.ts`; the flags are the same
+  (`--host`, `--port`, `--cwd`, `--data`, `--rotate-token`), as are
+  `PI_POCKET_PORT`, `PI_POCKET_DIR` and `PI_POCKET_HOST`. The checkout carries
+  its lockfile, and `npm ci` still installs it. Its six direct
+  `@earendil-works/*` dependencies, `pi-mcp` among them, are all `1.4.0`
+  (0.17.0 shipped `1.1.0`). `npm install -g pi-pocket` is still not used: the checkout keeps
+  upstream's own dependency pins, and the source tree the embed patch edits and
+  the drop-in folder links into.
+- **Extension API 2, and a tool result is `output`.** `POCKET_API` is 2 and
+  `OLDEST_POCKET_API` is 1 (`src/server/extension-web.ts`), so an API 1 module
+  still loads. Pi Durable 1.2 renamed a tool result's `content` to `output`, and
+  Pi Pocket's shim for the old name runs on drop-ins only
+  (`module.source === "drop-in"` in `src/server/reload.ts`); a module installed
+  as a built-in gets none. Both shipped modules therefore answer `output`, and
+  declare `pocketApi = 2`. Verified by calling the installed tools: the three web
+  tools and the subagent wrap return `output` and no `content`.
+- **Loader contract — unchanged.** Discovery is still the `.ts` files directly in
+  `src/server/extensions/`, skipping `*.test.ts` and names starting with `_`,
+  after an explicit order for Pi Pocket's own modules. That is why
+  `_agent-types-policy.ts` stays underscore-prefixed: the loader must not load
+  it, and `/api/extensions` must not list it.
+- **The subagent allow-list changed meaning (0.20).** An empty list now means the
+  session's own model only; a nonempty one means only the models it lists,
+  the session's own included. A spawn that leaves `model` out is refused when the
+  session's model is not listed, so a module that deletes `model` to fall back
+  can turn a clear refusal into "model is required". The agent-types extension
+  falls back only when *both* the type's model and the session's are allowed;
+  otherwise it keeps the type's model and lets upstream validate it.
+- **Thinking is no longer capped by the session (0.25).** A requested level is
+  lowered to the nearest the model supports at or below it, else the model's
+  lowest (`levelFor` in `src/server/models.ts`); the refusal of a model that
+  could not think as low as its parent is gone. What the extension still does
+  with the session's level is its own, narrower fallback policy — not an upstream
+  rule.
+- **The subagent tool, its courier, and the host.** `host.subagentModels()` is
+  there, the app still rebuilds the module when the owner changes the list, and
+  the `pocket.subagent-courier` task that delivers a failed subagent's report is
+  unchanged. The allow-list route is `POST /api/subagent-models` with
+  `{model, allowed}`: 401 without a sign-in, 403 without `X-Pocket: 1`, 400 for a
+  body it cannot read, 200 with the whole `subagentModels` list otherwise, and
+  503 while the server is still opening — the entrypoint retries on that.
+- **`models.json` compat still holds.** Pi reads it at startup and merges
+  `providers[].modelOverrides[].compat`. With the shipped file
+  `ModelRuntime.getModel("opencode-go", "kimi-k3").compat.supportsStrictMode` is
+  `false`; without it the same 1.4.0 catalog says `true`. The entrypoint's merge
+  therefore forces that one flag to `false` even in a file that says `true`;
+  every other key is still left alone.
+- **Embed patterns — unchanged.** One `frame-ancestors 'self'` in
+  `src/server/http/assets.ts`, two `SameSite=Lax` in `src/server/auth.ts`, so
+  `images/embed-patch.sh` applies with its exact-count guards intact. The
+  launcher's config (`config.json`, owner token, `subagentModels`) and the
+  single-writer lock sidecar (`harness.lock`) are as they were.
+- **One-way data migration (0.21).** Pi Durable 1.4.0 opens SQLite at schema
+  version 2 and migrates when it does; an older build cannot open the migrated
+  database. Back up the whole data folder (`/workspace/home/.pi-pocket`) with the
+  app stopped before the first 0.25 start, and treat that copy as the rollback:
+  an older image on a migrated volume does not work.
+- **Upgrades are the image's job, not the app's (0.23).** Menu → Update Pi Pocket
+  updates a git checkout and re-runs `npm ci`; this image removes `.git` after
+  `git rev-parse` verifies the commit, so the updater has nothing to update and
+  says so. Rebuild and redeploy the image instead. Its release check is on by
+  default, and only the owner can turn it off (Menu → Extensions → Pi Pocket
+  updates).
+- **Background tasks (0.24).** The `background` tool runs a command in `bash`,
+  cuts its log into segments with `split`, and watches its processes through
+  `/proc`: the image has all three (bash and coreutils from UBI, `/proc` from the
+  pod). Logs live under `<data>/background/` on the PVC, so they survive a server
+  restart but not pod replacement, and a long-lived noisy task spends PVC space.

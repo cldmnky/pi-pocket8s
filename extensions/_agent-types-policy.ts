@@ -2,15 +2,15 @@
  * The leading `_` keeps Pi Pocket's extension loader from loading this helper as an extension module.
  *
  * The parts of the agent-type extension that can be decided without Pi: which folders a project trust decision loads,
- * which thinking level a spawn asks for, and whether a type's model can run at the session's level. They live apart
- * from `agent-types.ts` so `node --test` can exercise them without the Pi runtime.
+ * whether a spawn's own thinking level passes the session's, and whether a type's model may give way to the session's.
+ * They live apart from `agent-types.ts` so `node --test` can exercise them without the Pi runtime.
  */
 import { join } from "node:path";
 
 /**
- * Pi's thinking levels (`ModelThinkingLevel`), in its order. The built-in subagent schema offered only the first six
- * before 0.12.2, so a type could not ask for `max` — the only level some models have, such as Kimi K3 — though the
- * runtime took it. The wrapped schema rebuilds the union from this list and carries the level's description across.
+ * Pi's thinking levels (`ModelThinkingLevel`), in its order. The wrapped schema rebuilds the built-in's union from this
+ * list, so a type file is judged against the same names here, and the level's description is carried across for the
+ * model to read. A level Pi adds shows up here as an unknown one, which is left to the built-in to judge.
  */
 export const THINKING: readonly string[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -29,8 +29,11 @@ export type TypeModel = {
 };
 
 /**
- * The level a spawn asks for: the caller's, capped at the session's; a type's own only when the caller set none. A
- * level this version does not know is left for the built-in to judge rather than guessed at.
+ * The level a spawn is compared against: the caller's, capped at the session's. This is the local fallback policy of
+ * `fallsBackToSessionModel`, not an upstream rule: 0.25 dropped the old cap on a parent's thinking level and lowers a
+ * requested one to the nearest supported at or below it, else the model's lowest. Keeping the comparison no higher
+ * than the session's is what makes a fallback a safe substitution: the session's model already runs at its own level.
+ * A level this version does not know is left for the built-in to judge rather than guessed at.
  */
 export function wantedThinking(asked: string | undefined, sessionLevel: string): string {
     if (asked === undefined) {
@@ -47,7 +50,7 @@ export function wantedThinking(asked: string | undefined, sessionLevel: string):
     return askedRank > sessionRank ? sessionLevel : asked;
 }
 
-/** Whether `levels` contains one at or below `level`; the built-in refuses a model that cannot think that low. */
+/** Whether `levels` contains one at or below `level`: a model without one cannot run at that height at all. */
 export function canThinkAtOrBelow(levels: readonly string[], level: string): boolean {
     const most = rankThinking(level);
 
@@ -78,9 +81,13 @@ export function projectFolders(cwd: string | undefined, trust: ProjectTrust): st
 }
 
 /**
- * Whether a type's model must give way to the session's model: it is allowed, it is not the session's own model, and
- * it cannot think at the level the spawn asks for. A type model that is unknown or not allowed is left to the built-in
- * so its error, not a silent switch, reaches the caller.
+ * Whether a type's model must give way to the session's model: both are allowed, the type's is not the session's own,
+ * and it cannot think at the level the spawn is compared against. A type model that is unknown or not allowed is left
+ * to the built-in so its error, not a silent switch, reaches the caller.
+ *
+ * The session's model has to be allowed too. With no allow-list the built-in accepts only the session's own model, and
+ * with a nonempty one only the listed models: in both cases dropping the type's model for a session model off the list
+ * would turn the built-in's clear refusal into a second, worse failure.
  */
 export function fallsBackToSessionModel(options: {
     readonly typeModel: string | undefined;
@@ -99,8 +106,11 @@ export function fallsBackToSessionModel(options: {
     const same =
         info.model.provider === parentModel.provider && info.model.modelId === parentModel.modelId;
     const key = `${info.model.provider}/${info.model.modelId}`;
+    const parentKey = `${parentModel.provider}/${parentModel.modelId}`;
+    // An empty list puts nothing off limits here: the check below already refuses a type model that is not listed.
+    const parentAllowed = allowed.length === 0 || allowed.includes(parentKey);
 
-    if (same || !allowed.includes(key)) {
+    if (same || !allowed.includes(key) || !parentAllowed) {
         return false;
     }
 

@@ -12,6 +12,10 @@
  * `web-search/` — see `web-search/NOTICE.md`; this file is the adapter, because Pi Pocket
  * extensions use Pi Durable's tool API rather than Pi's.
  *
+ * `pocketApi` is the Pi Pocket extension API this file targets. 2 is the current one, where a tool
+ * result carries its parts in `output` (Pi Durable 1.2 renamed it from `content`); Pi Pocket's
+ * `content` shim covers drop-ins only, and a built-in gets none, so the field name has to be right here.
+ *
  * A search runs on the provider named in `~/.pi/agent/web-search.json`
  * (`{"provider":…,"model":…}`), or on the best available model from the known-good providers when
  * that file does not exist — `web_search_config` lists the choices and sets or clears the file. A
@@ -26,6 +30,9 @@ import { cutText, FetchError, fetchPage, MAX_BODY_BYTES, type FetchedPage } from
 import { modelRegistry, searchContext } from "./web-search/model.ts";
 import { pickSearchModel, rank, type SearchCandidate } from "./web-search/select.ts";
 import { webSearch, WebSearchSchema } from "./web-search/vendor/web_search.ts";
+
+/** The Pi Pocket extension API this module is written for: 2 (`POCKET_API` in the application). */
+export const pocketApi = 2;
 
 /** A hung provider call must not hold the tool call open forever. */
 const SEARCH_TIMEOUT_MS = 180_000;
@@ -91,7 +98,7 @@ function webSearchTool(agentDir: string) {
             }
 
             return {
-                content: [{ type: "text" as const, text: answer }],
+                output: [{ type: "text" as const, text: answer }],
                 ...(failed ? { isError: true } : {}),
                 ...(Object.keys(details).length > 0 ? { details } : {}),
             };
@@ -124,7 +131,7 @@ function webFetchTool() {
                         ? error.message
                         : `web_fetch could not read ${args.url}: ${String(error)}`;
 
-                return { content: [{ type: "text" as const, text: message }], isError: true };
+                return { output: [{ type: "text" as const, text: message }], isError: true };
             }
 
             const details: Record<string, string | number | boolean> = { url: page.url, status: page.status };
@@ -137,7 +144,7 @@ function webFetchTool() {
                 // Saying what it is beats dumping it: the model has no use for base64 image bytes.
                 const size = page.bytes === undefined ? " of unknown size" : `, ${formatSize(page.bytes)}`;
                 return {
-                    content: [
+                    output: [
                         {
                             type: "text" as const,
                             text: `${page.url} serves ${page.contentType || "a file type this tool does not know"}${size}. web_fetch returns text (HTML, JSON, plain text) only; download the file in the workspace if its bytes matter.`,
@@ -176,7 +183,7 @@ function webFetchTool() {
                     : `${page.title === undefined ? "" : `# ${page.title}\n\n`}${body}`;
 
             return {
-                content: [{ type: "text" as const, text: text + (notes.length === 0 ? "" : `\n\n${notes.join("\n\n")}`) }],
+                output: [{ type: "text" as const, text: text + (notes.length === 0 ? "" : `\n\n${notes.join("\n\n")}`) }],
                 details,
             };
         },
@@ -269,7 +276,7 @@ function configTool(agentDir: string) {
                 try {
                     had = clearPin(path);
                 } catch (error) {
-                    return { content: [{ type: "text" as const, text: describeWriteFailure(path, error) }], isError: true };
+                    return { output: [{ type: "text" as const, text: describeWriteFailure(path, error) }], isError: true };
                 }
 
                 return text(
@@ -312,7 +319,7 @@ function configTool(agentDir: string) {
             try {
                 writePin(path, { provider: chosen.provider, model: chosen.id });
             } catch (error) {
-                return { content: [{ type: "text" as const, text: describeWriteFailure(path, error) }], isError: true };
+                return { output: [{ type: "text" as const, text: describeWriteFailure(path, error) }], isError: true };
             }
 
             const others = matches.filter((model) => model !== chosen).map(describeModel);
@@ -337,7 +344,7 @@ function describeModel(model: SearchCandidate | undefined): string {
 }
 
 function text(body: string) {
-    return { content: [{ type: "text" as const, text: body }] };
+    return { output: [{ type: "text" as const, text: body }] };
 }
 
 export default function createWebSearch(host: PocketHost) {

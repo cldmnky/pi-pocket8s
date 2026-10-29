@@ -22,8 +22,11 @@ how updates reach an existing volume — remove the old file (or directory) and
 restart the pod.
 
 `models.json` is the exception: a workspace that already has one keeps it, and
-the entrypoint instead merges the one override in (only where it is missing,
-leaving other keys alone) so a workspace with its own models does not lose the
-fix. A file that does not parse, or a pod without `jq`, is reported in the log
-and left untouched. Remove the override from your copy once upstream's catalog
-stops advertising strict mode for this model.
+the entrypoint instead merges the one override in, leaving every other key
+alone and forcing this one — `opencode-go/kimi-k3`'s
+`compat.supportsStrictMode` — to `false` even when the file says `true`. A
+workspace that turned it back on would send exactly the requests the gateway
+rejects, which is the failure this file exists to prevent. A file that does not
+parse, or a pod without `jq`, is reported in the log and left untouched. Remove
+the override from your copy once upstream's catalog stops advertising strict
+mode for this model.
