@@ -434,7 +434,7 @@ jobs:
           fi
           if ! sudo podman exec smoke jq -e '(.subagentModels // [])
               | (index("opencode-go/glm-5.3") == null)
-                and (index("opencode-go/kimi-k3") != null)
+                and (index("opencode-go/mimo-v2.6-pro") != null)
                 and (index("opencode-go/deepseek-v4.1-flash") != null)' \
               /workspace/home/.pi-pocket/config.json >/dev/null; then
             sudo podman exec smoke jq '.subagentModels // []' /workspace/home/.pi-pocket/config.json || true
