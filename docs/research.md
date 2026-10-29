@@ -344,3 +344,82 @@ the two commits, and only additive changes were found.
 Unchanged behaviour that the docs already record therefore keeps its wording,
 with the pinned version updated: the subagent allow-list's strictness in both
 directions, the models-file refresh, and the one-way SQLite schema migration.
+
+## Read-only Kubernetes MCP server (2026-10-29)
+
+The image bundles [`containers/kubernetes-mcp-server`](https://github.com/containers/kubernetes-mcp-server)
+`v0.1.1` (Apache-2.0) plus a root-owned configuration for it, so an agent can query the cluster
+through MCP instead of shelling out to `kubectl`. What follows is the evidence behind each claim the
+README makes, taken from the pinned tag and from the binary itself on amd64.
+
+**Sources at the pinned tag.**
+
+- Configuration reference: [`docs/configuration.md`](https://github.com/containers/kubernetes-mcp-server/blob/v0.1.1/docs/configuration.md)
+  was read for every key the shipped TOML uses: `log_level`, `read_only`, `toolsets`, `kubeconfig`,
+  `[[denied_resources]]` with `group`/`version`/`kind`. An unknown key is fatal, and the behaviour was
+  confirmed rather than assumed: a `bogus_key = true` copy answered
+  `Error: failed to read config …: unknown config key "bogus_key"`. That is why the image build
+  asserts the file's shape.
+- `read_only` is applied where the tool list is built — `pkg/mcp/mcp.go` (`isToolApplicable`:
+  `if c.ReadOnly.Get() && !ptr.Deref(tool.Tool.Annotations.ReadOnlyHint, false) { return false }`),
+  with the option declared in `pkg/config/config.go`. A filtered tool is not registered, so it cannot
+  be called by name either; the binary answered `-32602 unknown tool "pods_run"`.
+- `denied_resources` is enforced below the tools, in
+  `pkg/kubernetes/accesscontrol_round_tripper.go`: `RoundTrip` resolves the request's GVR to a GVK and
+  calls `isAllowed` **before** the request goes out, for every HTTP method — so it blocks reads, not
+  only writes. The shipped TOML denies `""/v1/Secret`, which keeps Secret bodies (service account
+  tokens, TLS keys, image pull credentials) out of reach through `resources_get` and
+  `resources_list`. Probed with a stub kubeconfig: `resources_get` on a `v1/Secret` is not refused by
+  the tool layer, it reaches the transport and fails on the unreachable API server — the denial lives
+  where the docs say it does. A live-cluster check of the denial itself is not possible from a
+  checkout and is left to the operator.
+- `toolsets = ["core"]` is deliberate: `configuration_view` belongs to the `config` toolset, which
+  also reads the kubeconfig, so it is absent from the tool list rather than hidden by `read_only`.
+
+**What the binary reports.** Over stdio with the shipped TOML and a `--config-dir` drop-in pointing
+`kubeconfig` at a stub, `initialize` answered `kubernetes-mcp-server v0.1.1` and `tools/list` returned
+13 tools, every one `readOnlyHint: true`, `destructiveHint: false`:
+
+```
+events_list  namespaces_list  nodes_log  nodes_stats_summary  nodes_top  pods_get
+pods_list  pods_list_in_namespace  pods_log  pods_top  projects_list  resources_get  resources_list
+```
+
+No write tool and no `configuration_view` appears, and `pods_run` answered `unknown tool`. The
+filter was measured too, not assumed: the same file with `read_only = true` removed lists 19 tools
+instead, adding `pods_delete`, `pods_exec`, `pods_run`, `resources_create_or_update`,
+`resources_delete` and `resources_scale`. Listing tools needs no cluster, which is what lets the image
+build run this check: the repository's `images/mcp-server-runtime.test.mjs` does exactly that, with
+the stub kubeconfig, and skips in a checkout where `MCP_SERVER_BIN` is unset. It was run against the
+downloaded binary: 13 tools, all read-only; with the line removed, three of its four tests fail.
+
+**Release, checksums and size.** The release publishes no `checksums.txt`. Its
+[API entry](https://api.github.com/repos/containers/kubernetes-mcp-server/releases/tags/v0.1.1)
+carries a per-asset `digest`, read on 2026-10-29 and pinned in `images/Containerfile`:
+
+| Asset | Size | sha256 |
+| --- | --- | --- |
+| `kubernetes-mcp-server-linux-amd64` | 87 183 522 B | `a40cca87e009b68b56444d8e789f4f101731642b82faf8b84f382eb936e98b95` |
+| `kubernetes-mcp-server-linux-arm64` | 81 592 482 B | `c62620aaed0f6834e9eab912e0472a44482b823c12b036e25b66d8703cdf5695` |
+
+Both were downloaded and hashed: the amd64 file matched and ran (`--version` → `v0.1.1`, statically
+linked, `not a dynamic executable`); the arm64 file matched but cannot run on the amd64 host used for
+the check. The build verifies the download against the pinned sha256 with `sha256sum -c` and makes no
+API call of its own: a replaced or re-uploaded asset fails the build, and an unauthenticated API rate
+limit (60 requests per hour per IP) cannot fail one. The digest was captured from the release API at
+pin time, which is where a version bump must take it from again. Both architectures are built natively
+in CI, so the arm64 `--version` assertion in the Containerfile runs on an arm64 runner.
+
+**Why it is inert, and where the restriction lives.** Pi Pocket's MCP support is an extension, not a
+built-in: the image therefore ships no gallery extension and nothing in it loads a server on its own,
+so `~/.pi/agent/mcp.json` starts nothing until the owner installs the gallery's **mcp** extension and
+switches the `kubernetes` server on. That is a decision, not an oversight — the extension is the owner's choice, and a seeded
+entry is the least surprising way to make one switch turn the feature on. The posture itself is in the
+root-owned `/usr/share/pi-agent/mcp/kubernetes-read-only.toml`, which the server is pointed at from
+the image, so a session that widens it has to name a different file in its own `mcp.json`.
+
+**Honest limits.** Lancet Guard checks `bash` calls, not MCP calls, so this path is not gated by it;
+and the pod's `bash` holds the same service account, so `kubectl` can do everything the server's read
+tools can and more. The server narrows what a *tool call* reaches. The boundary is the service
+account's RBAC, in `charts/pi-pocket/` — no chart, RBAC, SCC, NetworkPolicy or Secret changed for this
+addition.

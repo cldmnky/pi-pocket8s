@@ -1,0 +1,37 @@
+# Read-only Kubernetes and OpenShift access for the MCP server the image ships at
+# /usr/local/bin/kubernetes-mcp-server. Root-owned and never edited in the pod: this file
+# is the posture, not a preference. It stays inert until the owner installs the gallery
+# "mcp" extension and switches the "kubernetes" server on (see ~/.pi/agent/mcp.json).
+#
+# Every key below is checked against the server's own reference at the pinned tag,
+# https://github.com/containers/kubernetes-mcp-server/blob/v0.1.1/docs/configuration.md.
+# An unknown key fails the load ("unknown config key"), so a typo stops the server instead
+# of silently dropping the restriction.
+
+# kubectl-style verbosity; 2 logs the cluster connection and the effective options.
+log_level = 2
+
+# Only tools annotated readOnlyHint=true are exposed at all: the write tools of the
+# enabled toolsets (pods_run, pods_delete, resources_create/update/delete, ...) are never
+# registered, so they cannot be called by name either.
+read_only = true
+
+# The "core" toolset: pods, generic resources, events, namespaces/projects, nodes and
+# their logs, plus the top/stats readers. "config" is left off on purpose: it reads the
+# kubeconfig, and configuration_view would expose it.
+toolsets = ["core"]
+
+# The kubeconfig the entrypoint writes for the pod's service account. It names the
+# projected token file instead of a snapshot, so the server picks up rotation per request.
+kubeconfig = "/workspace/home/.kube/config"
+
+# read_only already hides every write tool; this is the second lock, on a different
+# layer. denied_resources is a GroupVersionKind list the server refuses for *every*
+# request it makes, reads included (pkg/kubernetes/accesscontrol_round_tripper.go,
+# isAllowed, checked in RoundTrip before the request is sent). A Secret keeps its
+# contents — service account tokens, TLS keys, image pull credentials — out of the
+# model's reach even through resources_get and resources_list.
+[[denied_resources]]
+group = ""
+version = "v1"
+kind = "Secret"

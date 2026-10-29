@@ -30,3 +30,26 @@ rejects, which is the failure this file exists to prevent. A file that does not
 parse, or a pod without `jq`, is reported in the log and left untouched. Remove
 the override from your copy once upstream's catalog stops advertising strict
 mode for this model.
+
+## MCP servers
+
+Two more files are image-resident and root-owned; the entrypoint seeds one of
+them, and the other is read straight from the image:
+
+- `mcp.json` → `~/.pi/agent/mcp.json`, copy-if-missing like the files above. It
+declares one server, `kubernetes`, which runs `/usr/local/bin/kubernetes-mcp-server`
+with `--config /usr/share/pi-agent/mcp/kubernetes-read-only.toml`, and describes it
+as read-only cluster access for the pod's service account. **It starts nothing by
+itself**: MCP support comes from the gallery's **mcp** extension, which this image does
+not ship, so the entry is inert until the owner installs it and switches `kubernetes`
+on. Edit or delete your copy freely — it is your file once seeded.
+- `mcp/kubernetes-read-only.toml`, used from `/usr/share/pi-agent/` and never copied
+into the workspace. `log_level = 2`, `read_only = true`, `toolsets = ["core"]`, the
+kubeconfig the entrypoint writes for the pod, and one `[[denied_resources]]` entry for
+the core `v1` `Secret` kind. Keys are checked against the server's reference at the
+pinned tag (`docs/configuration.md` of `v0.1.1`): an unknown key makes the server exit
+at startup, which is why the image build asserts this file's shape.
+
+Both are asserted at image build time, and the server itself is started during the
+build to check its tool list: every tool it registers must be annotated `readOnlyHint`,
+and no write tool may be callable by name (`images/mcp-server-runtime.test.mjs`).

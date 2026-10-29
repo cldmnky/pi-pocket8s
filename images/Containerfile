@@ -61,6 +61,14 @@ ARG HELM_VERSION=v4.3.0
 ARG OC_VERSION=4.22.17
 ARG GH_VERSION=2.102.0
 ARG AGENT_BROWSER_VERSION=0.38.2
+# Read-only Kubernetes MCP server (github.com/containers/kubernetes-mcp-server), the binary the
+# shipped ~/.pi/agent/mcp.json points at. Its release publishes no checksums.txt, so the sha256
+# below is the per-asset `digest` from the release API, captured when this version was pinned (see
+# docs/research.md). The build verifies the download against it and needs no API call, so a replaced
+# or re-uploaded asset fails the build and a rate-limited API cannot stall one.
+ARG KUBERNETES_MCP_SERVER_VERSION=v0.1.1
+ARG KUBERNETES_MCP_SERVER_SHA256_AMD64=a40cca87e009b68b56444d8e789f4f101731642b82faf8b84f382eb936e98b95
+ARG KUBERNETES_MCP_SERVER_SHA256_ARM64=c62620aaed0f6834e9eab912e0472a44482b823c12b036e25b66d8703cdf5695
 # Chrome for Testing, pinned Stable. CfT publishes no checksums, so the
 # version is pinned exactly and downloads use HTTPS from Google's bucket.
 ARG CHROME_VERSION=155.0.8059.39
@@ -199,6 +207,30 @@ RUN set -eux; \
     kubectl version --client; \
     helm version; \
     oc version --client; \
+    cd /; \
+    rm -rf "${downloads}"
+
+# The read-only Kubernetes MCP server. Nothing in the image starts it: it is inert until the owner
+# installs the gallery "mcp" extension and switches the kubernetes server on, which is why the
+# binary is here rather than in a sidecar. The posture it starts in is the root-owned
+# /usr/share/pi-agent/mcp/kubernetes-read-only.toml (read_only, the core toolset, no Secrets).
+# The download is checked against the pinned sha256 and nothing else: no release-API call here, so
+# the build cannot fail on an API rate limit.
+RUN set -eux; \
+    case "${TARGETARCH:-$(uname -m)}" in \
+        amd64|x86_64) mcp_arch=amd64; mcp_sha256="${KUBERNETES_MCP_SERVER_SHA256_AMD64}" ;; \
+        arm64|aarch64) mcp_arch=arm64; mcp_sha256="${KUBERNETES_MCP_SERVER_SHA256_ARM64}" ;; \
+        *) echo "unsupported architecture: ${TARGETARCH:-$(uname -m)}" >&2; exit 1 ;; \
+    esac; \
+    downloads=/tmp/kubernetes-mcp-server; \
+    mkdir -p "${downloads}"; \
+    cd "${downloads}"; \
+    asset="kubernetes-mcp-server-linux-${mcp_arch}"; \
+    curl -fsSL --retry 5 --retry-delay 2 -o "${asset}" \
+        "https://github.com/containers/kubernetes-mcp-server/releases/download/${KUBERNETES_MCP_SERVER_VERSION}/${asset}"; \
+    echo "${mcp_sha256}  ${asset}" | sha256sum -c -; \
+    install -m 0755 "${asset}" /usr/local/bin/kubernetes-mcp-server; \
+    kubernetes-mcp-server --version | grep -qF "${KUBERNETES_MCP_SERVER_VERSION}"; \
     cd /; \
     rm -rf "${downloads}"
 
@@ -357,6 +389,39 @@ RUN set -eux; \
         if (entry?.compat?.supportsStrictMode !== false) throw new Error("the kimi-k3 strict-mode override is missing"); \
         console.log("model fix ok"); \
     '
+
+# Fail the build if the shipped MCP configuration loses its shape. Neither file is read by the image
+# itself: ~/.pi/agent/mcp.json starts nothing until the owner installs the gallery "mcp" extension, so
+# a wrong path there, or an unknown key in the TOML (which makes the server exit at startup), would
+# only surface in the owner's workspace.
+RUN set -eux; \
+    test -f /usr/share/pi-agent/mcp.json; \
+    test -f /usr/share/pi-agent/mcp/kubernetes-read-only.toml; \
+    test -x /usr/local/bin/kubernetes-mcp-server; \
+    node -e ' \
+        const { readFileSync } = require("node:fs"); \
+        const entry = require("/usr/share/pi-agent/mcp.json").mcpServers?.kubernetes; \
+        if (entry?.command !== "/usr/local/bin/kubernetes-mcp-server") throw new Error("mcp.json does not point at the installed server"); \
+        if (JSON.stringify(entry?.args) !== JSON.stringify(["--config", "/usr/share/pi-agent/mcp/kubernetes-read-only.toml"])) throw new Error("mcp.json does not name the shipped TOML"); \
+        if (typeof entry?.description !== "string" || entry.description.length === 0) throw new Error("mcp.json has no description for the server"); \
+        const toml = readFileSync("/usr/share/pi-agent/mcp/kubernetes-read-only.toml", "utf8").split("\n"); \
+        for (const line of ["read_only = true", "toolsets = [\"core\"]", "kind = \"Secret\""]) { \
+            if (!toml.includes(line)) throw new Error("the shipped TOML is missing: " + line); \
+        } \
+        console.log("mcp configuration ok"); \
+    '
+
+# The posture taken from the server itself, not from the TOML it was given: start it over stdio with
+# the shipped configuration and a stub kubeconfig, then assert that every tool it registers is
+# annotated read-only and that no write tool can be called by name. The test lives in the repository
+# and skips without MCP_SERVER_BIN, which is what `make test` in a checkout does.
+COPY --chown=1000:1000 images/mcp-server-runtime.test.mjs /tmp/mcp-server-runtime.test.mjs
+RUN set -eux; \
+    cd /opt/pi-pocket; \
+    MCP_SERVER_BIN=/usr/local/bin/kubernetes-mcp-server \
+    MCP_SERVER_CONFIG=/usr/share/pi-agent/mcp/kubernetes-read-only.toml \
+        node --test /tmp/mcp-server-runtime.test.mjs; \
+    rm -f /tmp/mcp-server-runtime.test.mjs
 
 # The pin, checked in the application itself rather than in the Containerfile: the checkout's version, the Pi
 # packages the shipped extensions are written against, the extension API level the app loads, and the kimi-k3
