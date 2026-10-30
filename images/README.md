@@ -24,7 +24,9 @@ podman build --pull --platform linux/amd64,linux/arm64 \
 
 The build needs network access to the Red Hat UBI repositories, GitHub, the npm
 registry, `dl.k8s.io`, `get.helm.sh`, and `mirror.openshift.com`. Every downloaded tool is
-verified against the vendor's published SHA-256; RPMS are GPG-verified by `dnf`.
+verified against a SHA-256 — the vendor's published one where the release publishes one,
+otherwise a per-asset digest pinned in `images/Containerfile` — and RPMs are GPG-verified
+by `dnf`.
 
 ## What is inside
 
@@ -44,9 +46,27 @@ verified against the vendor's published SHA-256; RPMS are GPG-verified by `dnf`.
 | Browser | Chrome-for-Testing `chrome-headless-shell` (pinned Stable, both arches) at `/usr/local/bin/chromium`; `PI_POCKET_BROWSER`/`PI_POCKET_BROWSER_ARGS=--no-sandbox` are preset, `--no-sandbox` is required inside user namespaces |
 | Browser automation | `agent-browser` CLI (pinned, pruned to the build arch) driving that Chromium over CDP; `AGENT_BROWSER_EXECUTABLE_PATH`/`AGENT_BROWSER_ARGS=--no-sandbox` are preset (see "Browser automation for agents") |
 | Everyday tools | `ripgrep` (v15.2.0, checksum-verified), `jq`, `curl`, `tar`, `unzip`, `xz`, `rsync`, `procps-ng` (`ps`, `top`), `vim`, `less`, `file`, `diffutils` |
+| Shell and workflow lint | `shellcheck` 0.11.0 (GPL-3.0-or-later, which the shipped binary is under; no vendor checksum, so the per-arch digest is pinned) and `actionlint` 1.7.12 (MIT, vendor checksum) — the checks this repository runs on `images/*.sh` and `.github/workflows/**`, in the image so an agent finds them before it pushes rather than in CI after |
+| YAML/JSON | `yq` v4.54.1 (MIT, vendor checksum) — read and edit a manifest or a config file from the shell without writing a script for it |
+| Search | `fd` 10.5.0 (MIT or Apache-2.0, pinned digest) — `find` with the defaults you meant, for locating a file in a large working tree |
+| Highlighting | `bat` 0.26.1 (MIT or Apache-2.0, pinned digest) — syntax-highlighted `cat`, which people also alias or set as `PAGER` |
+| Diff viewer | `delta` 0.20.1 (MIT, pinned digest; the release tag has no `v` and publishes no aarch64 musl asset, so both arches take the gnu build) — readable diffs in a terminal. **Opt-in per user**: the image sets no `core.pager`, so a workspace turns it on itself with `git config --global core.pager delta` |
+| Python packaging | `uv` 0.13.6 and `uvx` (MIT or Apache-2.0, vendor checksum per asset) — a fast virtualenv and tool runner beside the RHEL `python3`/`pip`, so a project that pins `uv` can use it |
+| Databases | `sqlite3` 3.46.1 (UBI `sqlite`, public domain) — inspect a workspace database from the shell. The live `/workspace/home/.pi-pocket/pocket.sqlite` is **read-only** from a shell: the app is its single writer (`replicas: 1`, `Recreate`), so open it as `sqlite3 -readonly` and change data through the app |
+| Networking | `ncat`/`nc` (`nmap-ncat` 7.92, LicenseRef-Nmap, the licence applying to the shipped binary) and `socat` 1.7.4.4 (GPL-2.0) — connect to a port, or find out which port a service really listens on, without a language runtime |
 | Subagent types | `extensions/agent-types.ts`, `extensions/_agent-types-policy.ts` plus `extensions/agent-types/`, installed as a Pi Pocket built-in extension in `/opt/pi-pocket/src/server/extensions/` (on by default, toggled in Menu → Extensions). Wraps the built-in `subagent` tool so a spawn can name a `type:` — `architect`, `coder`, `reviewer` — and get that type's model, thinking level, tool list, and brief, and lists the types in the agent's prompt. The type files themselves are data: copied to `/usr/share/pi-agent/agents/` and seeded into `~/.pi/agent/agents/` at start, copy-if-missing, so the workspace's copies stay editable. Project types follow Pi's project trust (`.pi/agents` unless distrusted, `.agents/agents` only when trusted), and a type's model falls back to the session's model when it cannot think at the session's level. The build fails if the module stops loading or a shipped type loses its frontmatter |
 | Web search | `extensions/web-search.ts` plus `extensions/web-search/`, installed as a Pi Pocket built-in extension in `/opt/pi-pocket/src/server/extensions/` (on by default, toggled in Menu → Extensions). Adds the agent's `web_search` tool, backed by the search model's own provider API (Gemini grounding, OpenAI/Codex Responses, xAI, Anthropic, DeepSeek, Ollama Cloud, OpenCode). Provider code vendored unmodified from `pi-web-search` 1.7.0 (MIT, `extensions/web-search/NOTICE.md`); searches are billable model calls on the install's own credentials. The build fails if the module stops loading or stops installing its tool |
 | Log safety | `images/log-filter.mjs` (`pi-pocket-log-filter`): runs the launcher, redacts the owner sign-in token and QR block from the container log, forwards signals, passes errors through |
+
+The versions above are the ones shipping today; the three RPM rows name what UBI 10 appstream
+has now (`sqlite` 3.46.1, `nmap-ncat` 7.92, `socat` 1.7.4.4), and a scheduled image rebuild
+follows RHEL's updates for them. Everything downloaded is pinned in `images/Containerfile`
+and does not move until that pin is bumped.
+
+Size: the downloaded toolchain adds about 35 MiB of downloads and 88 MiB of installed
+binaries on amd64, and 116 MiB on arm64 — most of that difference is its statically linked
+`shellcheck` at 52.5 MiB against 15.5 MiB on x86_64. If the image has to slim down, `delta`,
+`bat` and `fd` are the conveniences to drop first; the linters, `yq` and `uv` are not.
 
 ## Runtime contract
 
@@ -329,7 +349,11 @@ normally.
 - **pull requests**: build only, no push; the amd64 pi-pocket image is smoke
   tested (server answers on `:8787`, workspace prepared, `node:sqlite`/`jiti` load,
   `rg`/`kubectl`/`helm`/`oc` run, the owner token never appears in the log, and `vfs`
-  storage plus the nested-container helpers are in place).
+  storage plus the nested-container helpers are in place). The same job asserts the added
+  toolchain really runs: `yq` evaluates an expression (`-e '.a == 1'`), `shellcheck` is
+  clean on both `/usr/local/bin/pi-pocket-*` scripts, `actionlint` is clean on the
+  repository's own workflows copied into the container, and `sqlite3`, `ncat`/`nc`,
+  `socat`, `fd`, `bat`, `delta`, `uv` and `uvx` each answer a version query.
 - **main, tags, manual, scheduled**: each architecture is pushed to
   `quay.io/cldmnky/<image>` under `sha-<commit>-<arch>`, then merged into one
   manifest list tagged `sha-<commit>` (immutable); `latest` is added on `main`

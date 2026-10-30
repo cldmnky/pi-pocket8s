@@ -103,7 +103,7 @@ seed_pi_models() {
     if [ ! -e "${dest}" ]; then
         mkdir -p "$(dirname "${dest}")" 2>/dev/null || true
         if cp "${src}" "${dest}" 2>/dev/null; then
-            log "seeded ${dest#$HOME_DIR/} from the image"
+            log "seeded ${dest#"$HOME_DIR"/} from the image"
         else
             warn "cannot seed ${dest}"
         fi
@@ -136,7 +136,7 @@ seed_pi_models() {
     }
 
     printf '%s\n' "${merged}" > "${dest}.tmp" && mv "${dest}.tmp" "${dest}" && \
-        log "added the kimi-k3 strict-mode override to ${dest#$HOME_DIR/}"
+        log "added the kimi-k3 strict-mode override to ${dest#"$HOME_DIR"/}"
 }
 
 # Seed the shipped Pi skill, prompt template, and subagent types into the workspace home.
@@ -156,7 +156,7 @@ seed_pi_agent_files() {
         if [ -r "${from}" ]; then
             mkdir -p "$(dirname "${to}")" 2>/dev/null || true
             if cp "${from}" "${to}" 2>/dev/null; then
-                log "seeded ${to#$HOME_DIR/} from the image"
+                log "seeded ${to#"$HOME_DIR"/} from the image"
             else
                 warn "cannot seed ${to}"
             fi
@@ -180,7 +180,7 @@ seed_pi_agent_files() {
         fi
         mkdir -p "$(dirname "${to}")" 2>/dev/null || true
         if cp "${file}" "${to}" 2>/dev/null; then
-            log "seeded ${to#$HOME_DIR/} from the image"
+            log "seeded ${to#"$HOME_DIR"/} from the image"
         else
             warn "cannot seed ${to}"
         fi
@@ -479,7 +479,7 @@ seed_subagent_models() {
     done
 
     if [ "${#seeded[@]}" -gt 0 ]; then
-        printf '%s\n' "${seeded[@]}" > "${marker}.tmp" && mv "${marker}.tmp" "${marker}" \
+        { printf '%s\n' "${seeded[@]}" > "${marker}.tmp" && mv "${marker}.tmp" "${marker}"; } \
             || warn "could not record seeded subagent models in ${marker}"
     fi
 }
