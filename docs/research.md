@@ -22,6 +22,8 @@ SSH public keys are configuration, not Git credentials. No SSH daemon is introdu
 
 An OCI image volume is read-only content, not an automatically activated second root filesystem. Mounting an arbitrary UBI tool image into a Node image does not resolve ELF interpreters, dynamic libraries or language-runtime lookup paths. A single integrated UBI10 image is simpler and verifiable on both supported architectures. Toolchain caches and user-installed tools can persist under the workspace home.
 
+A tool comes from a UBI 10 RPM when one exists (`sqlite`, `nmap-ncat`, `socat` today), because Red Hat builds, signs and rebuilds it with the base image, and `dnf` verifies it. Only where UBI has no RPM does the build download an upstream release, and then it verifies a SHA-256 before installing: the vendor's published checksum file when the release has one, otherwise a per-asset digest pinned in `images/Containerfile` that a version bump must update. A pinned digest is a weaker guarantee than a signed repository — it proves the bytes did not change, not who made them — so it is the fallback, not the default.
+
 ## Why nested-container and VFS
 
 The inspected `restricted-v3` SCC requires pod user namespaces, non-root IDs 1000–65534, RuntimeDefault seccomp, dropped capabilities and no privilege escalation. It is the portal profile and an available stricter pocket profile.

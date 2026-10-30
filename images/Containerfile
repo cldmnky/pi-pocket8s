@@ -73,6 +73,26 @@ ARG KUBERNETES_MCP_SERVER_SHA256_ARM64=c62620aaed0f6834e9eab912e0472a44482b823c1
 # version is pinned exactly and downloads use HTTPS from Google's bucket.
 ARG CHROME_VERSION=155.0.8059.39
 
+# Developer tools UBI 10 has no RPM for. yq, actionlint and uv publish a checksum
+# file (or one per asset) that the build fetches; shellcheck, fd, bat and delta
+# publish none, so their per-asset SHA-256 is pinned here instead — bump the version
+# and the matching digests together, or the build stops on sha256sum -c.
+ARG YQ_VERSION=4.54.1
+ARG SHELLCHECK_VERSION=0.11.0
+ARG SHELLCHECK_SHA256_X86_64=b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
+ARG SHELLCHECK_SHA256_AARCH64=68a8133197a50beb8803f8d42f9908d1af1c5540d4bb05fdfca8c1fa47decefc
+ARG ACTIONLINT_VERSION=1.7.12
+ARG FD_VERSION=10.5.0
+ARG FD_SHA256_X86_64=761c72dc8e120d85b22292063be8a796e2eeb20eb3e4f38b8fa2343ccf3514a7
+ARG FD_SHA256_AARCH64=d76c4317f7d5dba69f8a2a15856c90c777e7f0dd4e85f0de8c76de6992c374d4
+ARG BAT_VERSION=0.26.1
+ARG BAT_SHA256_X86_64=0dcd8ac79732c0d5b136f11f4ee00e581440e16a44eab5b3105b611bbf2cf191
+ARG BAT_SHA256_AARCH64=6369242c584065f195fb20cb36fbd7cb63ae690605bbe89868a7596b596c2c23
+ARG DELTA_VERSION=0.20.1
+ARG DELTA_SHA256_X86_64=50f08c879f84c81ceb220e476491a7f492d2c9c671e79918cc44badf961a6240
+ARG DELTA_SHA256_AARCH64=da7f4338f593572ff426ae153e0870e2fdc72729416eff551b40cdeb67940db8
+ARG UV_VERSION=0.13.6
+
 LABEL \
     name="pi-pocket" \
     vendor="cldmnky" \
@@ -127,6 +147,7 @@ RUN set -eux; \
         libxkbcommon \
         make \
         mesa-libgbm \
+        nmap-ncat \
         nspr \
         nss \
         nodejs24 \
@@ -139,6 +160,8 @@ RUN set -eux; \
         podman \
         buildah \
         skopeo \
+        socat \
+        sqlite \
         procps-ng \
         python3-pip \
         python3-devel \
@@ -149,6 +172,17 @@ RUN set -eux; \
         xz \
     && dnf clean all \
     && rm -rf /var/cache/dnf /var/cache/yum
+
+# `socat`, `sqlite` (the sqlite3 CLI) and `nmap-ncat` (ncat and nc) come from UBI's own
+# appstream repo: Red Hat builds and signs them, so they need no download block. The
+# sqlite3 binary is for inspecting the workspace's databases; the live `pocket.sqlite`
+# is read-only from a shell, because the app is its single writer.
+RUN set -eux; \
+    sqlite3 :memory: 'select 1'; \
+    sqlite3 --version; \
+    ncat --version; \
+    test -x /usr/bin/nc; \
+    socat -V
 
 RUN set -eux; \
     ln -sf /usr/bin/node-24 /usr/local/bin/node; \
@@ -231,6 +265,92 @@ RUN set -eux; \
     echo "${mcp_sha256}  ${asset}" | sha256sum -c -; \
     install -m 0755 "${asset}" /usr/local/bin/kubernetes-mcp-server; \
     kubernetes-mcp-server --version | grep -qF "${KUBERNETES_MCP_SERVER_VERSION}"; \
+    cd /; \
+    rm -rf "${downloads}"
+
+# The linters and the YAML/JSON tool, in their own layer so bumping one does not re-fetch
+# the browser and kubectl above. yq reads and edits manifests from the shell; shellcheck
+# and actionlint are the checks this repository runs on its own scripts and workflows, so
+# they are in the image for an agent to run before it pushes; fd is find with sane
+# defaults. Same contract as the block above: each archive is verified before anything
+# from it is installed.
+RUN set -eux; \
+    case "${TARGETARCH:-$(uname -m)}" in \
+        amd64|x86_64) yq_arch=amd64; actionlint_arch=amd64; sc_arch=x86_64; sc_sha="${SHELLCHECK_SHA256_X86_64}"; fd_arch=x86_64; fd_sha="${FD_SHA256_X86_64}" ;; \
+        arm64|aarch64) yq_arch=arm64; actionlint_arch=arm64; sc_arch=aarch64; sc_sha="${SHELLCHECK_SHA256_AARCH64}"; fd_arch=aarch64; fd_sha="${FD_SHA256_AARCH64}" ;; \
+        *) echo "unsupported architecture: ${TARGETARCH:-$(uname -m)}" >&2; exit 1 ;; \
+    esac; \
+    downloads=/tmp/downloads-lint; \
+    mkdir -p "${downloads}"; \
+    cd "${downloads}"; \
+    yq_tar="yq_linux_${yq_arch}.tar.gz"; \
+    curl -fsSL --retry 5 --retry-delay 2 -O "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/${yq_tar}"; \
+    curl -fsSL --retry 5 --retry-delay 2 -o yq-checksums-bsd "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/checksums-bsd"; \
+    yq_line="$(grep -F "SHA256 (${yq_tar}) = " yq-checksums-bsd)"; \
+    test -n "${yq_line}"; \
+    echo "$(printf '%s\n' "${yq_line}" | cut -d' ' -f4)  ${yq_tar}" | sha256sum -c -; \
+    tar -xzf "${yq_tar}" "./yq_linux_${yq_arch}"; \
+    install -m 0755 "./yq_linux_${yq_arch}" /usr/local/bin/yq; \
+    sc_tar="shellcheck-v${SHELLCHECK_VERSION}.linux.${sc_arch}.tar.gz"; \
+    curl -fsSL --retry 5 --retry-delay 2 -O "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/${sc_tar}"; \
+    echo "${sc_sha}  ${sc_tar}" | sha256sum -c -; \
+    tar -xzf "${sc_tar}" "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"; \
+    install -m 0755 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck; \
+    actionlint_tar="actionlint_${ACTIONLINT_VERSION}_linux_${actionlint_arch}.tar.gz"; \
+    curl -fsSL --retry 5 --retry-delay 2 -O "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${actionlint_tar}"; \
+    curl -fsSL --retry 5 --retry-delay 2 -o actionlint-checksums.txt "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_checksums.txt"; \
+    grep " ${actionlint_tar}\$" actionlint-checksums.txt | sha256sum -c -; \
+    tar -xzf "${actionlint_tar}" actionlint; \
+    install -m 0755 actionlint /usr/local/bin/actionlint; \
+    fd_tar="fd-v${FD_VERSION}-${fd_arch}-unknown-linux-musl.tar.gz"; \
+    curl -fsSL --retry 5 --retry-delay 2 -O "https://github.com/sharkdp/fd/releases/download/v${FD_VERSION}/${fd_tar}"; \
+    echo "${fd_sha}  ${fd_tar}" | sha256sum -c -; \
+    tar -xzf "${fd_tar}" "fd-v${FD_VERSION}-${fd_arch}-unknown-linux-musl/fd"; \
+    install -m 0755 "fd-v${FD_VERSION}-${fd_arch}-unknown-linux-musl/fd" /usr/local/bin/fd; \
+    yq --version; \
+    shellcheck --version; \
+    actionlint --version; \
+    fd --version; \
+    cd /; \
+    rm -rf "${downloads}"
+
+# The highlighter, the diff viewer and the Python toolchain, again in their own layer. bat
+# and delta make a diff or a log readable for a human reading along, delta as an opt-in
+# per-user Git pager (the image sets no core.pager); uv and uvx are the modern Python
+# environment and tool runner, beside the RHEL python3/pip above. delta's release tag has
+# no `v` prefix and publishes no aarch64-musl asset, so both architectures take its gnu
+# build; uv publishes a checksum next to each asset, bat and delta none, so their digests
+# are the pinned ones above.
+RUN set -eux; \
+    case "${TARGETARCH:-$(uname -m)}" in \
+        amd64|x86_64) bat_arch=x86_64; bat_sha="${BAT_SHA256_X86_64}"; delta_arch=x86_64; delta_sha="${DELTA_SHA256_X86_64}"; uv_arch=x86_64 ;; \
+        arm64|aarch64) bat_arch=aarch64; bat_sha="${BAT_SHA256_AARCH64}"; delta_arch=aarch64; delta_sha="${DELTA_SHA256_AARCH64}"; uv_arch=aarch64 ;; \
+        *) echo "unsupported architecture: ${TARGETARCH:-$(uname -m)}" >&2; exit 1 ;; \
+    esac; \
+    downloads=/tmp/downloads-pager; \
+    mkdir -p "${downloads}"; \
+    cd "${downloads}"; \
+    bat_tar="bat-v${BAT_VERSION}-${bat_arch}-unknown-linux-musl.tar.gz"; \
+    curl -fsSL --retry 5 --retry-delay 2 -O "https://github.com/sharkdp/bat/releases/download/v${BAT_VERSION}/${bat_tar}"; \
+    echo "${bat_sha}  ${bat_tar}" | sha256sum -c -; \
+    tar -xzf "${bat_tar}" "bat-v${BAT_VERSION}-${bat_arch}-unknown-linux-musl/bat"; \
+    install -m 0755 "bat-v${BAT_VERSION}-${bat_arch}-unknown-linux-musl/bat" /usr/local/bin/bat; \
+    delta_tar="delta-${DELTA_VERSION}-${delta_arch}-unknown-linux-gnu.tar.gz"; \
+    curl -fsSL --retry 5 --retry-delay 2 -O "https://github.com/dandavison/delta/releases/download/${DELTA_VERSION}/${delta_tar}"; \
+    echo "${delta_sha}  ${delta_tar}" | sha256sum -c -; \
+    tar -xzf "${delta_tar}" "delta-${DELTA_VERSION}-${delta_arch}-unknown-linux-gnu/delta"; \
+    install -m 0755 "delta-${DELTA_VERSION}-${delta_arch}-unknown-linux-gnu/delta" /usr/local/bin/delta; \
+    uv_tar="uv-${uv_arch}-unknown-linux-gnu.tar.gz"; \
+    curl -fsSL --retry 5 --retry-delay 2 -O "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${uv_tar}"; \
+    curl -fsSL --retry 5 --retry-delay 2 -o "${uv_tar}.sha256" "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${uv_tar}.sha256"; \
+    sha256sum -c "${uv_tar}.sha256"; \
+    tar -xzf "${uv_tar}" "uv-${uv_arch}-unknown-linux-gnu/uv" "uv-${uv_arch}-unknown-linux-gnu/uvx"; \
+    install -m 0755 "uv-${uv_arch}-unknown-linux-gnu/uv" /usr/local/bin/uv; \
+    install -m 0755 "uv-${uv_arch}-unknown-linux-gnu/uvx" /usr/local/bin/uvx; \
+    bat --version; \
+    delta --version; \
+    uv --version; \
+    uvx --version; \
     cd /; \
     rm -rf "${downloads}"
 
