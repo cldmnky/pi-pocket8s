@@ -33,7 +33,7 @@ by `dnf`.
 | Component | Source |
 | --- | --- |
 | Base | `registry.access.redhat.com/ubi10/ubi:latest` (multi-arch, RHEL 10) |
-| Pi Pocket | upstream commit `c65cf99…`, cloned and `git rev-parse`-verified in the build, its `package.json` version checked against `PI_POCKET_VERSION`, `npm ci` from the committed lockfile (with dev dependencies) into `/opt/pi-pocket`. Its six direct `@earendil-works/*` packages are 1.4.0, and the extension API it loads is 1 to 2 |
+| Pi Pocket | upstream commit `5e13a8b…`, cloned and `git rev-parse`-verified in the build, its `package.json` version checked against `PI_POCKET_VERSION`, `npm ci` from the committed lockfile (with dev dependencies) into `/opt/pi-pocket`. Its six direct `@earendil-works/*` packages are 1.4.0, and the extension API it loads is 1 to 2 |
 | Node | RHEL `nodejs24` (Node 24 + npm 11), exposed as `node`/`npm`/`npx` in `/usr/local/bin`; `node:sqlite` and `jiti` are runtime requirements |
 | Go | RHEL `golang` |
 | Python | RHEL `python3`, `python3-pip`, `python3-devel`, `venv` |
@@ -42,6 +42,7 @@ by `dnf`.
 | SCM/SSH | `git`, `openssh`, `openssh-clients`, `known_hosts`/`authorized_keys` from the runtime secret |
 | Containers | `podman`, `buildah`, `skopeo`, with `/etc/containers/storage.conf` defaulting to the `vfs` driver (no `/dev/fuse`, no host devices) |
 | Kubernetes | pinned `kubectl` v1.35.6 (matches the 1.35 cluster; newer clients break skew policy), `oc` 4.22.17, `helm` v4.3.0, each checksum-verified |
+| Kubernetes MCP server | `kubernetes-mcp-server` v0.1.1 ([upstream](https://github.com/containers/kubernetes-mcp-server), Apache-2.0) at `/usr/local/bin/kubernetes-mcp-server`, ~87 MB on amd64 and ~82 MB on arm64, statically linked. The release publishes no `checksums.txt`, so the pinned sha256 is the per-asset `digest` from the release API, captured at pin time; the build verifies the download with `sha256sum` and makes no API call. Started only by Pi's MCP client — see "MCP: read-only Kubernetes tools" in the root README |
 | GitHub | `gh` CLI v2.102.0 (checksum-verified) at `/usr/local/libexec/gh`; `/usr/local/bin/gh` is a wrapper (`images/github-credentials.mjs`) that fetches a short-lived, repository-scoped GitHub App installation token from the credential broker per command, and doubles as a Git credential helper (`gh --git`) for `https://github.com` — tokens are never stored on disk or put in remote URLs. The token is scoped to one repository, so run `gh` inside a clone whose `origin` is on github.com, or name the repository (`-R owner/name`, `GH_REPO=owner/name`); without one in scope there is nothing to ask the broker for, and it says so. Active when `GITHUB_BROKER_URL` is set (the chart sets it in GitHub App mode) |
 | Browser | Chrome-for-Testing `chrome-headless-shell` (pinned Stable, both arches) at `/usr/local/bin/chromium`; `PI_POCKET_BROWSER`/`PI_POCKET_BROWSER_ARGS=--no-sandbox` are preset, `--no-sandbox` is required inside user namespaces |
 | Browser automation | `agent-browser` CLI (pinned, pruned to the build arch) driving that Chromium over CDP; `AGENT_BROWSER_EXECUTABLE_PATH`/`AGENT_BROWSER_ARGS=--no-sandbox` are preset (see "Browser automation for agents") |
@@ -84,6 +85,7 @@ node /opt/pi-pocket/bin/pi-pocket.js \
 - **Data**: `/workspace/home/.pi-pocket` (`pocket.sqlite`, `config.json`, uploads, push keys,
   `background/` logs).
 - **Configuration mount**: `/run/pocket-config` (the runtime Secret). `api-keys.json` is exported as the allow-listed provider environment variables; `web-search.json`, when present, is exported as `PI_WEB_SEARCH_CONFIG`, which points the agent's web-search configuration at the portal's choice.
+- **MCP**: `~/.pi/agent/mcp.json` is seeded from `/usr/share/pi-agent/mcp.json` (copy-if-missing), and the read-only server it names is configured by the root-owned `/usr/share/pi-agent/mcp/kubernetes-read-only.toml`. Neither starts anything on its own: the entry waits for the owner to install the gallery **mcp** extension and switch the `kubernetes` server on.
 - **Signals**: the launcher is PID 1, so `SIGTERM` stops running work cleanly.
 - **Noninteractive**: the container has no TTY, so `--host 0.0.0.0` selects the LAN
   (direct) access mode and no menu is shown. The launcher's sign-in link and QR code are
@@ -206,12 +208,22 @@ Conventions for agents in this pod:
 ### Seeded Pi skill and prompt template
 
 `/usr/share/pi-agent/` holds the Pi configuration shipped in the image
-(`pi-agent/` in this repo): the `agent-browser` skill and the
-`/agent-browser` prompt template. The entrypoint copies each into
+(`pi-agent/` in this repo): the `agent-browser` skill, the `/agent-browser`
+prompt template, and the MCP server list. The entrypoint copies each into
 `~/.pi/agent/` on boot when it is not already there, so every session gets
 the `/agent-browser …` slash command with no further setup. In-pod edits
 survive restarts; deleting a file re-seeds the shipped copy on the next pod
 start, which is also how updates reach an existing volume.
+
+`mcp.json` names the read-only Kubernetes MCP server the image bundles. It is
+inert on purpose: MCP support arrives with the gallery's **mcp** extension, which
+this image does not ship, so the file starts nothing until the owner installs it
+and switches the `kubernetes` server on. The server's own configuration,
+`/usr/share/pi-agent/mcp/kubernetes-read-only.toml`, stays root-owned and is
+read from the image rather than the workspace, so it is not editable from a
+session — a session that wants different rules has to name a different file in
+its own `mcp.json`. The root README's "MCP: read-only Kubernetes tools" section
+says what it can and cannot prevent.
 
 At boot the entrypoint also copies the shipped subagent types (`~/.pi/agent/agents/`,
 copy-if-missing), and merges the `models.json` with the `kimi-k3` strict-mode override
@@ -348,12 +360,14 @@ normally.
 
 - **pull requests**: build only, no push; the amd64 pi-pocket image is smoke
   tested (server answers on `:8787`, workspace prepared, `node:sqlite`/`jiti` load,
-  `rg`/`kubectl`/`helm`/`oc` run, the owner token never appears in the log, and `vfs`
-  storage plus the nested-container helpers are in place). The same job asserts the added
-  toolchain really runs: `yq` evaluates an expression (`-e '.a == 1'`), `shellcheck` is
-  clean on both `/usr/local/bin/pi-pocket-*` scripts, `actionlint` is clean on the
-  repository's own workflows copied into the container, and `sqlite3`, `ncat`/`nc`,
-  `socat`, `fd`, `bat`, `delta`, `uv` and `uvx` each answer a version query.
+  `rg`/`kubectl`/`helm`/`oc` run, the owner token never appears in the log, `vfs`
+  storage plus the nested-container helpers are in place, and the bundled read-only
+  Kubernetes MCP server, its TOML, and the seeded `mcp.json` are all present). The same
+  job asserts the added toolchain really runs: `yq` evaluates an expression
+  (`-e '.a == 1'`), `shellcheck` is clean on both `/usr/local/bin/pi-pocket-*`
+  scripts, `actionlint` is clean on the repository's own workflows copied into the
+  container, and `sqlite3`, `ncat`/`nc`, `socat`, `fd`, `bat`, `delta`, `uv` and
+  `uvx` each answer a version query.
 - **main, tags, manual, scheduled**: each architecture is pushed to
   `quay.io/cldmnky/<image>` under `sha-<commit>-<arch>`, then merged into one
   manifest list tagged `sha-<commit>` (immutable); `latest` is added on `main`

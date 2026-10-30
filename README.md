@@ -386,6 +386,47 @@ Two things about subagents are worth knowing, because both looked like "the suba
   replaced, and that one flag is forced to `off` even in a file that turned it back on). Remove the
   override once upstream's catalog stops claiming strict mode.
 
+## MCP: read-only Kubernetes tools
+
+The image bundles the [Kubernetes MCP server](https://github.com/containers/kubernetes-mcp-server)
+(pinned `v0.1.1`, Apache-2.0, checksum-verified at build time) so an agent can query the cluster
+through MCP instead of shelling out to `kubectl`. Three files ship, all root-owned:
+
+| Path (in the image) | What it is |
+| --- | --- |
+| `/usr/local/bin/kubernetes-mcp-server` | the pinned binary, both architectures |
+| `/usr/share/pi-agent/mcp/kubernetes-read-only.toml` | its configuration: `read_only = true`, the `core` toolset only, and `Secret` denied |
+| `/usr/share/pi-agent/mcp.json` | the server list, seeded into `~/.pi/agent/mcp.json` on boot (copy-if-missing) |
+
+**It is off.** MCP support in Pi Pocket is an extension, and this image neither bundles nor seeds
+one: nothing starts the server, and the seeded `mcp.json` sits unread until the owner installs the
+**mcp** extension from Pi Pocket's extension gallery (Menu → Extensions) and switches the `kubernetes`
+server on there. That is deliberate — the extension is the owner's choice — and the `mcp.json` entry
+is the workspace's once seeded, so an edit or a deletion is kept.
+
+What it offers when switched on: `pods_list`, `pods_get`, `pods_log`, `resources_list`,
+`resources_get`, `events_list`, `namespaces_list`, `projects_list`, and the node and `top` readers —
+as the pod's own service account, over the kubeconfig the entrypoint writes. Two independent locks:
+`read_only = true` means the server registers only tools annotated `readOnlyHint` (the write tools are
+not there to be called, under any name), and `denied_resources` makes the server refuse `v1/Secret`
+for every request it sends, reads included. The image build asserts both the files and the tool list
+by starting the server; CI re-checks the binary, the TOML, and the seeded entry in the running image.
+
+**It is a guardrail, not a boundary.** Say so plainly, because it is easy to mistake for one:
+
+- The agent already has `bash` and `kubectl` with the same service account. Anyone who can steer the
+  agent can run `kubectl` directly, so this narrows what a *tool call* can do, not what the pod can
+  reach. Real isolation is the service account's RBAC, in `charts/pi-pocket/`.
+- **Lancet Guard does not inspect MCP calls.** It checks `bash` calls for the owner's approval, so the
+  MCP path is not gated by it — which is why the server's own read-only configuration carries the
+  restriction rather than a prompt rule.
+- Pi's MCP client offers `mcp_call` beside `mcp_call_read_only`. The posture does not depend on the
+  model choosing the read-only one: with `read_only = true` there is no write tool to call through
+  either.
+
+The entry is yours to change: edit `~/.pi/agent/mcp.json` to point at a configuration of your own,
+or delete it to get the shipped copy back on the next pod start.
+
 ## Development tools and cluster access
 
 See `images/README.md` for exact bundled versions, package sources and nested Podman limitations. The image integrates tools rather than mounting another image: an image-volume containing `/usr/bin` cannot supply its dependencies, interpreter paths and dynamic libraries safely by simply extending `PATH`.

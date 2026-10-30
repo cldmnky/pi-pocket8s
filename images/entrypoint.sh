@@ -139,16 +139,23 @@ seed_pi_models() {
         log "added the kimi-k3 strict-mode override to ${dest#"$HOME_DIR"/}"
 }
 
-# Seed the shipped Pi skill, prompt template, and subagent types into the workspace home.
-# Copy-if-missing: in-pod edits survive restarts, and deleting a file re-seeds
-# the shipped copy on the next start (the update path for existing volumes).
+# Seed the shipped Pi skill, prompt template, MCP server list, and subagent types into the
+# workspace home. Copy-if-missing: in-pod edits survive restarts, and deleting a file
+# re-seeds the shipped copy on the next start (the update path for existing volumes).
+#
+# mcp.json points Pi's MCP client at the read-only Kubernetes server the image ships. It
+# stays inert: MCP support comes from a gallery extension this image does not ship, so the
+# entry starts nothing until the owner installs it and switches the kubernetes server on.
+# That is also why it is seeded rather than enforced — the file is the owner's once it
+# exists, and a workspace that edits or deletes the entry keeps that choice.
 seed_pi_agent_files() {
     local src="${PI_AGENT_SOURCE:-/usr/share/pi-agent}"
     local dest="${HOME_DIR}/.pi/agent"
     local pair
     for pair in \
         "skills/agent-browser/SKILL.md:skills/agent-browser/SKILL.md" \
-        "prompts/agent-browser.md:prompts/agent-browser.md"; do
+        "prompts/agent-browser.md:prompts/agent-browser.md" \
+        "mcp.json:mcp.json"; do
         local from="${src}/${pair%%:*}" to="${dest}/${pair##*:}"
         if [ -e "${to}" ]; then
             continue

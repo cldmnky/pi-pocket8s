@@ -1,0 +1,9 @@
+{
+    "mcpServers": {
+        "kubernetes": {
+            "command": "/usr/local/bin/kubernetes-mcp-server",
+            "args": ["--config", "/usr/share/pi-agent/mcp/kubernetes-read-only.toml"],
+            "description": "Read-only Kubernetes and OpenShift cluster access as this workspace's service account: list and get pods, resources, and events, and read pod logs."
+        }
+    }
+}

@@ -188,6 +188,25 @@ jobs:
           sudo podman exec smoke test -f /workspace/home/.pi/agent/skills/agent-browser/SKILL.md
           sudo podman exec smoke test -f /workspace/home/.pi/agent/prompts/agent-browser.md
 
+          # The read-only Kubernetes MCP server, and the MCP server list the entrypoint seeds beside that
+          # skill. Nothing starts the server: MCP support comes from a gallery extension this image does not
+          # ship, so it stays inert until the owner installs that extension and switches the kubernetes server
+          # on. What is asserted is what the image ships — the pinned binary, its root-owned read-only TOML,
+          # and the entry that names both — plus the seed line in the log below.
+          sudo podman exec smoke test -x /usr/local/bin/kubernetes-mcp-server
+          sudo podman exec smoke kubernetes-mcp-server --version | grep -qx 'v0.1.1'
+          sudo podman exec smoke test -f /usr/share/pi-agent/mcp/kubernetes-read-only.toml
+          sudo podman exec smoke grep -qx 'read_only = true' /usr/share/pi-agent/mcp/kubernetes-read-only.toml
+          sudo podman exec smoke grep -qx 'toolsets = \["core"\]' /usr/share/pi-agent/mcp/kubernetes-read-only.toml
+          sudo podman exec smoke grep -qx 'kind = "Secret"' /usr/share/pi-agent/mcp/kubernetes-read-only.toml
+          sudo podman exec smoke test -f /workspace/home/.pi/agent/mcp.json
+          sudo podman exec smoke jq -e '
+            .mcpServers.kubernetes
+            | .command == "/usr/local/bin/kubernetes-mcp-server"
+              and .args == ["--config", "/usr/share/pi-agent/mcp/kubernetes-read-only.toml"]
+              and (.description | type == "string" and length > 0)' \
+            /workspace/home/.pi/agent/mcp.json >/dev/null
+
           # Nested-container Podman support: vfs storage, a subuid/subgid range inside
           # the pod's outer 65536-uid mapping, and setuid/filecap helper binaries.
           sudo podman exec smoke sh -c 'grep -q "driver = \"vfs\"" /etc/containers/storage.conf'
@@ -205,6 +224,8 @@ jobs:
             echo "::error::could not read the owner token from config.json"
             exit 1
           fi
+          grep -qF 'seeded .pi/agent/mcp.json' <<<"${logs}" \
+            || { echo "::error::the entrypoint did not seed ~/.pi/agent/mcp.json"; exit 1; }
 
           # The owner's allow-list for subagent models, with 0.25.0's meaning: an empty list lets a subagent run only
           # on its session's model, a nonempty one only on the models it lists — the session's own included. The
