@@ -1,5 +1,5 @@
 ---
-model: opencode-go/glm-5.3
+model: opencode-go/glm-5.3-flash
 thinking: high
 tools: read, bash, web_search
 description: Independent review against the requirements; findings with severity and evidence

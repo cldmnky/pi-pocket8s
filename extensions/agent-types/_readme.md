@@ -32,7 +32,7 @@ tools, or instructions — no restart needed: the next spawn sees the change.
 | --- | --- | --- |
 | `architect` | `opencode-go/mimo-v2.6-pro` | Requirements, design, risks, acceptance criteria, an ordered plan. Writes nothing. |
 | `coder` | `opencode-go/deepseek-v4.1-flash` | Implements the plan, writes tests, runs them, fixes failures. |
-| `reviewer` | `opencode-go/glm-5.3` | Verifies the change against the requirements. Writes nothing. |
+| `reviewer` | `opencode-go/glm-5.3-flash` | Verifies the change against the requirements. Writes nothing. |
 
 What a spawn may run on is the owner's allow-list in **Menu → Providers**, and Pi Pocket 0.20 and later read it
 strictly: an empty list means the session's own model only, a nonempty one means only the models it lists — the
@@ -61,5 +61,7 @@ file at once. Trivial changes skip all of this.
   change files, so it is a prompt-level rule unless Lancet Guard is on, which checks bash calls.
 - `thinking` must be a level the model offers; the model picker lists them. Pi Pocket 0.25 no longer caps the level
   at the session's: a level a model lacks becomes the nearest it supports below it, else its lowest. The shipped
-  models differ: `kimi-k3` offers only `max`; `deepseek-v4.1-flash` and `glm-5.3` offer `low`, `high`, and `max` (no
-  `medium`). The fallback above is why `architect` still works from a lower session.
+  models differ: `mimo-v2.6-pro` offers up to `high`, while `deepseek-v4.1-flash` and `glm-5.3-flash` offer `low`,
+  `high`, and `max` (no `medium`). A spawn that names a model explicitly may use any model the owner allows, so
+  `glm-5.3` stays available for a review that wants it. The fallback above is why `architect` still works from a
+  lower session.

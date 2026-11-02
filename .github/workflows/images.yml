@@ -236,12 +236,12 @@ jobs:
           for _ in $(seq 1 30); do
             logs="$(sudo podman logs smoke 2>&1)"
             if sudo podman exec smoke jq -e '(.subagentModels // []) as $allowed
-                | ["opencode-go/mimo-v2.6-pro", "opencode-go/deepseek-v4.1-flash", "opencode-go/glm-5.3"]
+                | ["opencode-go/mimo-v2.6-pro", "opencode-go/deepseek-v4.1-flash", "opencode-go/glm-5.3-flash"]
                 | map(. as $model | $allowed | index($model) != null) | all' \
                 /workspace/home/.pi-pocket/config.json >/dev/null 2>&1 \
               && grep -qF 'allowed opencode-go/mimo-v2.6-pro for subagents' <<<"${logs}" \
               && grep -qF 'allowed opencode-go/deepseek-v4.1-flash for subagents' <<<"${logs}" \
-              && grep -qF 'allowed opencode-go/glm-5.3 for subagents' <<<"${logs}"; then
+              && grep -qF 'allowed opencode-go/glm-5.3-flash for subagents' <<<"${logs}"; then
               seeded=1
               break
             fi
@@ -258,7 +258,7 @@ jobs:
           # header (403 without X-Pocket), a JSON body it can read (400), and granting a model that is already
           # allowed answers 200 with the whole list rather than growing it.
           seed_url="http://127.0.0.1:8787/api/subagent-models"
-          seed_body='{"model":"opencode-go/glm-5.3","allowed":true}'
+          seed_body='{"model":"opencode-go/glm-5.3-flash","allowed":true}'
           status="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
             -H 'X-Pocket: 1' --data "${seed_body}" "${seed_url}" || true)"
           if [ "${status}" != "401" ]; then
@@ -284,7 +284,7 @@ jobs:
               echo "::error::granting an allowed model answered ${status:-none} on attempt ${attempt}, not 200"
               exit 1
             fi
-            if ! jq -e '.subagentModels | index("opencode-go/glm-5.3") != null' /tmp/seed-grant.json >/dev/null; then
+            if ! jq -e '.subagentModels | index("opencode-go/glm-5.3-flash") != null' /tmp/seed-grant.json >/dev/null; then
               echo "::error::the grant answer does not carry the model in subagentModels"
               cat /tmp/seed-grant.json || true
               exit 1
@@ -450,17 +450,17 @@ jobs:
           revoke_url="http://127.0.0.1:8787/api/subagent-models"
           status="$(curl -sS -o /tmp/revoke.json -w '%{http_code}' -X POST -H "Authorization: Bearer ${token}" \
             -H 'Content-Type: application/json' -H 'X-Pocket: 1' \
-            --data '{"model":"opencode-go/glm-5.3","allowed":false}' "${revoke_url}" || true)"
+            --data '{"model":"opencode-go/glm-5.3-flash","allowed":false}' "${revoke_url}" || true)"
           if [ "${status}" != "200" ]; then
             echo "::error::revoking a seeded subagent model answered ${status:-none}, not 200"
             exit 1
           fi
-          if ! sudo podman exec smoke jq -e '(.subagentModels // []) | index("opencode-go/glm-5.3") == null' \
+          if ! sudo podman exec smoke jq -e '(.subagentModels // []) | index("opencode-go/glm-5.3-flash") == null' \
               /workspace/home/.pi-pocket/config.json >/dev/null; then
             echo "::error::the revoked model is still in subagentModels before the restart"
             exit 1
           fi
-          sudo podman exec smoke grep -qx 'opencode-go/glm-5.3' /workspace/home/.pi-pocket/.subagent-models-seeded \
+          sudo podman exec smoke grep -qx 'opencode-go/glm-5.3-flash' /workspace/home/.pi-pocket/.subagent-models-seeded \
             || { echo "::error::the seeding marker lost the revoked model, so a restart would grant it again"; exit 1; }
 
           sudo podman restart smoke >/dev/null
@@ -478,7 +478,7 @@ jobs:
             exit 1
           fi
           if ! sudo podman exec smoke jq -e '(.subagentModels // [])
-              | (index("opencode-go/glm-5.3") == null)
+              | (index("opencode-go/glm-5.3-flash") == null)
                 and (index("opencode-go/mimo-v2.6-pro") != null)
                 and (index("opencode-go/deepseek-v4.1-flash") != null)' \
               /workspace/home/.pi-pocket/config.json >/dev/null; then
