@@ -327,7 +327,7 @@ extension teaches the built-in `subagent` tool to apply one when it spawns with 
 | --- | --- | --- |
 | `architect` | `opencode-go/mimo-v2.6-pro` | Requirements, design, risks, acceptance criteria, an ordered plan. No `write`/`edit`. |
 | `coder` | `opencode-go/deepseek-v4.1-flash` | Implements the plan, writes tests, runs them, fixes failures. |
-| `reviewer` | `opencode-go/glm-5.3` | Verifies the change against the requirements; findings by severity. No `write`/`edit`. |
+| `reviewer` | `opencode-go/glm-5.3-flash` | Verifies the change against the requirements; findings by severity. No `write`/`edit`. |
 
 For non-trivial development work the intended order is **architect → coder → reviewer**, then the
 findings go back to the coder and the reviewer verifies (at most two review/fix cycles, then report
@@ -345,7 +345,7 @@ workflow, and what has no equivalent here
 
 Models are per-deployment: the shipped files use the OpenCode Go models the workflow was designed
 around, and the type's `thinking` level must be one the model offers (the model picker lists them;
-`mimo-v2.6-pro` offers up to `high`, while `deepseek-v4.1-flash` and `glm-5.3` offer `low`, `high`, and
+`mimo-v2.6-pro` offers up to `high`, while `deepseek-v4.1-flash` and `glm-5.3-flash` offer `low`, `high`, and
 `max`). Pi Pocket 0.25 lowers a requested level to the nearest the model supports below it, rather
 than refusing the model. When a type's model cannot think at the session's level or lower, the
 subagent runs on the session's model instead, and the started message names the model actually used —
