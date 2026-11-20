@@ -9,10 +9,13 @@
  * `pocketApi` is the Pi Pocket extension API this file targets. 2 is the current one, where a tool result carries its
  * parts in `output` (Pi Durable 1.2 renamed it from `content`); Pi Pocket's `content` shim covers drop-ins only, and a
  * built-in gets none, so the field name has to be right here.
+ *
+ * Tool schemas are built with TypeBox's `Type` from `typebox`: Pi 1.5 (Pi Pocket 0.28) stopped re-exporting it from
+ * `@earendil-works/pi-ai`, and the compatibility module that still does is registered for drop-ins only, never for a
+ * built-in like this file.
  */
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Type } from "@earendil-works/pi-ai";
 import {
     defineExtension,
     defineTool,
@@ -23,6 +26,7 @@ import {
     type ToolRegistration,
 } from "@earendil-works/pi-durable";
 import { ProjectTrustStore, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import type { PocketHost } from "/opt/pi-pocket/src/server/host.ts";
 import {
     THINKING,
