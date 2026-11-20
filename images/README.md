@@ -2,7 +2,7 @@
 
 `images/Containerfile` builds `quay.io/cldmnky/pi-pocket`: upstream
 [pi-pocket](https://github.com/TannerMidd/pi-pocket) at pinned commit
-`5e13a8b161226cbfef3e696c1bd31b8da110e381` (v0.26.0) on UBI 10, plus an integrated
+`284559cdc4cfb07b0b3f9d6882684e77a58e575b` (v0.29.0) on UBI 10, plus an integrated
 developer toolchain. It runs as a fixed non-root user and keeps everything it writes on
 the volumes mounted at `/workspace/home` and `/workspace/repos`.
 
@@ -33,7 +33,7 @@ by `dnf`.
 | Component | Source |
 | --- | --- |
 | Base | `registry.access.redhat.com/ubi10/ubi:latest` (multi-arch, RHEL 10) |
-| Pi Pocket | upstream commit `5e13a8b…`, cloned and `git rev-parse`-verified in the build, its `package.json` version checked against `PI_POCKET_VERSION`, `npm ci` from the committed lockfile (with dev dependencies) into `/opt/pi-pocket`. Its six direct `@earendil-works/*` packages are 1.4.0, and the extension API it loads is 1 to 2 |
+| Pi Pocket | upstream commit `284559c…`, cloned and `git rev-parse`-verified in the build, its `package.json` version checked against `PI_POCKET_VERSION`, `npm ci` from the committed lockfile (with dev dependencies) into `/opt/pi-pocket`. Its seven direct `@earendil-works/*` packages are 1.5.2 (`pi-schema` joined the six in 0.28.0), its `typebox` is 1.3.27 (the shipped extensions import `Type` from it), and the extension API it loads is 1 to 2 |
 | Node | RHEL `nodejs24` (Node 24 + npm 11), exposed as `node`/`npm`/`npx` in `/usr/local/bin`; `node:sqlite` and `jiti` are runtime requirements |
 | Go | RHEL `golang` |
 | Python | RHEL `python3`, `python3-pip`, `python3-devel`, `venv` |
@@ -125,6 +125,14 @@ its parts in `output`: Pi Durable 1.2 renamed it from `content`, and Pi Pocket's
 shim for the old name applies to drop-ins only. The build calls the installed
 tools and fails if one answers with nothing usable.
 
+Their tool schemas come from TypeBox's `Type` in `typebox`, not from
+`@earendil-works/pi-ai`: Pi 1.5 (Pi Pocket 0.28) stopped re-exporting `Type`, and
+the compatibility module that still has it (`src/server/extension-pi-ai-compat.ts`)
+is installed for drop-ins only, so a built-in that imported it from pi-ai would
+fail to load. `images/pocket-runtime-compat.test.mjs` runs that check against the
+installed copy: `pi-ai` exports no `Type`, both modules import it from `typebox`,
+and both still load against the packages next to them.
+
 The `_agent-types-policy.ts` helper keeps its leading `_` so the loader's
 discovery (`.ts` files, not `*.test.ts`, not `_*`) does not treat it as a module.
 
@@ -150,6 +158,23 @@ Extensions → Pi Pocket updates).
 one-way: before the first start on 0.25, stop the app and copy the whole data
 folder, and treat that copy as the rollback. An older image cannot open the
 migrated database.
+
+0.28 adds a second one-way step on the same volume: it runs on Pi 1.5, whose Pi
+Durable writes `pi.live` at document version 3 once a conversation runs, where Pi
+Durable 1.4.0 (the 0.26 image) reads version 1 and refuses the folder with
+"Document … (pi.live) has newer version 3 than 1". Pi Durable 1.5.2 keeps SQLite
+itself at schema version 2, so the database file looks the same; the stored
+documents are what moved. A volume that 0.29.0 has used therefore does not go back
+to 0.26.0, and a copy of the SQLite file alone is not a rollback: copy the whole
+data folder with the app stopped, before the new image starts.
+
+Upstream's 0.29.0 notes give one more reason not to go back to 0.28 with the same
+folder: 0.29 stores a schedule's pause and a repeat's time window in fields 0.28
+does not read, so 0.28 can send a paused schedule and runs a windowed repeat all
+day and night. The document stays at version 1 in both, which is why the older
+server opens it instead of refusing it. Nothing here was exercised as a rollback
+on a live folder; [docs/research.md](../docs/research.md#re-pin-to-0290-2026-11-18)
+records what was checked.
 
 ### Web terminal daemon
 
@@ -227,13 +252,13 @@ says what it can and cannot prevent.
 
 At boot the entrypoint also copies the shipped subagent types (`~/.pi/agent/agents/`,
 copy-if-missing), and merges the `models.json` with the `kimi-k3` strict-mode override
-before the app starts. Pi Pocket 0.26.0's **Refresh models** re-reads that same file, so
+before the app starts. The pinned app's **Refresh models** re-reads that same file, so
 the override survives a refresh. The merge leaves other keys alone but forces that one
 flag to `false`, even in a file that says `true`: a workspace with strict mode on again
 would send exactly the requests the gateway rejects.
 
 What a subagent may run on is the owner's allow-list in **Menu → Providers**, and
-0.26.0's rule is strict in both directions: an empty list means the session's own model
+0.29.0's rule is strict in both directions: an empty list means the session's own model
 only, a nonempty one means only the models it lists — the session's own included, so a
 spawn that names no model is refused while that model is off the list. The entrypoint
 therefore allows the shipped types' models once per model through the app's API.

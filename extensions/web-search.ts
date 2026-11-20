@@ -16,14 +16,18 @@
  * result carries its parts in `output` (Pi Durable 1.2 renamed it from `content`); Pi Pocket's
  * `content` shim covers drop-ins only, and a built-in gets none, so the field name has to be right here.
  *
+ * Tool schemas are built with TypeBox's `Type` from `typebox`: Pi 1.5 (Pi Pocket 0.28) stopped
+ * re-exporting it from `@earendil-works/pi-ai`, and the compatibility module that still does is
+ * registered for drop-ins only, never for a built-in like this file.
+ *
  * A search runs on the provider named in `~/.pi/agent/web-search.json`
  * (`{"provider":…,"model":…}`), or on the best available model from the known-good providers when
  * that file does not exist — `web_search_config` lists the choices and sets or clears the file. A
  * search is a model call on that provider's account, so it costs tokens.
  */
-import { Type } from "@earendil-works/pi-ai";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, truncateHead } from "@earendil-works/pi-coding-agent";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
+import { Type } from "typebox";
 import type { PocketHost } from "/opt/pi-pocket/src/server/host.ts";
 import { clearPin, describeWriteFailure, pinPath, pinSource, readPin, writePin } from "./web-search/config.ts";
 import { cutText, FetchError, fetchPage, MAX_BODY_BYTES, type FetchedPage } from "./web-search/fetch.ts";

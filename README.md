@@ -4,7 +4,7 @@ A persistent [pi-pocket](https://github.com/TannerMidd/pi-pocket) coding workspa
 
 ## Architecture
 
-- `quay.io/cldmnky/pi-pocket`: upstream pi-pocket plus integrated developer tools. The base is `registry.access.redhat.com/ubi10/ubi:latest`, refreshed on image builds. Upstream source is pinned (v0.26.0, commit `5e13a8b…`) and verified in the build, not silently upgraded; upgrading means building and deploying a new image.
+- `quay.io/cldmnky/pi-pocket`: upstream pi-pocket plus integrated developer tools. The base is `registry.access.redhat.com/ubi10/ubi:latest`, refreshed on image builds. Upstream source is pinned (v0.29.0, commit `284559c…`) and verified in the build, not silently upgraded; upgrading means building and deploying a new image.
 - `quay.io/cldmnky/pi-pocket-portal`: Go HTTP server with an embedded, dependency-free SPA, using a separate service account.
 - `charts/pi-pocket`: one pi-pocket replica with `Recreate` updates, a retained PVC mounted at `/workspace`, namespace RBAC, user namespaces, services, ingresses and ingress NetworkPolicy.
 - `/workspace/repos`: repositories. `/workspace/home`: persistent home, pi-pocket SQLite/settings, Pi provider logins, caches and SSH configuration.
@@ -372,7 +372,7 @@ Two things about subagents are worth knowing, because both looked like "the suba
   `[subagent <name> failed: …]` — three of three failed probes did on the older code. The one that
   went silent was the one a *second* message had been sent to after its run had already failed: its
   reporter waited for an answer that could not come, and *Running now* said so. 0.17.0 reworked that
-  case and the pinned upstream (0.26.0) keeps it — the message is withdrawn and the failure reported
+  case and the pinned upstream (0.29.0) keeps it — the message is withdrawn and the failure reported
   through a courier, instead of a submission that can wait for good. Either way a report is a message to the
   parent, delivered at the parent's next pause: while the parent is in the middle of a long turn, a
   report that was already sent still looks like silence, and then arrives with the others. If a
@@ -446,6 +446,8 @@ PVC and generated credential Secrets have `helm.sh/resource-policy: keep`. Unins
 **Upgrading the packaged app is a new image.** Deploying this chart upgrades Pi Pocket by replacing the image, not by **Menu → Update Pi Pocket**: that updater (0.23) works on a git checkout and this image deletes `.git` after verifying the pinned commit, so there is nothing for it to update. Its release check is on by default and only the owner can turn it off (Menu → Extensions → Pi Pocket updates).
 
 **0.21's database migration is one-way.** Pi Pocket 0.21 moved SQLite to Pi Durable's schema version 2 when it opens the database, and an older build cannot open the migrated file. Before the first start on 0.25, stop the application and copy the whole data folder (`/workspace/home/.pi-pocket` — the database, `config.json`, and the rest); that copy is the rollback, because putting an older image back on the migrated volume does not work.
+
+**0.28 moves the data one way too.** Pi Pocket 0.28 runs on Pi 1.5, whose Pi Durable stores `pi.live` at document version 3 as soon as a conversation runs; the 0.26 image this chart shipped before, on Pi Durable 1.4.0, reads that document at version 1 and refuses the folder. So a volume that 0.29.0 has used does not go back to 0.26.0, and the SQLite file alone is not the rollback: take the copy of `/workspace/home/.pi-pocket` with the app stopped, before the image is replaced, and keep it until the new image is checked. Upstream's 0.29.0 notes add a second reason not to go back to 0.28: that version ignores a schedule's pause and a repeat's time window, so a paused schedule can send and a windowed repeat runs all day and night. No rollback was exercised here; these are the version checks in [docs/research.md](docs/research.md#re-pin-to-0290-2026-11-18).
 
 **Background tasks write to the PVC.** The `background` tool (0.24) keeps each task's output under `<data>/background/`. The tasks survive a server restart but not pod replacement, and a noisy task keeps spending PVC space until it ends or is stopped.
 

@@ -10,7 +10,7 @@
 
 Upstream was inspected directly at commit `55849dd3769f1cc265404443193c1ab4385aeedb` (`0.11.0`); the move to `e1298a0e8e674211d37ef71ecabef0ec8a9af13c` (`0.12.2`) re-checked the surfaces this packaging depends on — the launcher and lockfile, the two lines the portal-embed patch rewrites, the extension loader and host interface, and the subagent tool two shipped extensions build on. The re-pin to `26542deded0123d6b217828ed2f71f566d9a7a19` (`0.17.0`) re-checked the same surfaces: launcher flags (`--host`, `--port`, `--cwd`, `--data`), the embed-patch lines (`frame-ancestors 'self'` once, `SameSite=Lax` twice), the extension loader and host interface, the subagent tool plus the owner's new allow-list for other models (`subagentModels`), and the courier marker `pocket.subagent-courier`. It adds one runtime dependency, `@earendil-works/pi-mcp`, which the existing `npm ci` from the committed lockfile installs; no new system package is needed. It contains a lockfile and launches through `bin/pi-pocket.js`; the server is not a static frontend. It persists SQLite and settings, has an owner sign-in key, and already implements scoped invites and owner/steer/view access. Its CLI supports explicit host, port, working and data directories. That avoids an interactive launcher in Kubernetes. Forwarded HTTPS headers are used for external URLs and secure cookies.
 
-Current pin: `5e13a8b161226cbfef3e696c1bd31b8da110e381` (`0.26.0`). What each re-pin re-checked, and what it required of this packaging, is in [Re-pin to 0.26.0](#re-pin-to-0260-2026-10-29) and [Re-pin to 0.25.0](#re-pin-to-0250-2026-10-26).
+Current pin: `284559cdc4cfb07b0b3f9d6882684e77a58e575b` (`0.29.0`). What each re-pin re-checked, and what it required of this packaging, is in [Re-pin to 0.29.0](#re-pin-to-0290-2026-11-18), [Re-pin to 0.26.0](#re-pin-to-0260-2026-10-29) and [Re-pin to 0.25.0](#re-pin-to-0250-2026-10-26).
 
 ## Why a separate portal
 
@@ -425,3 +425,87 @@ and the pod's `bash` holds the same service account, so `kubectl` can do everyth
 tools can and more. The server narrows what a *tool call* reaches. The boundary is the service
 account's RBAC, in `charts/pi-pocket/` — no chart, RBAC, SCC, NetworkPolicy or Secret changed for this
 addition.
+
+## Re-pin to 0.29.0 (2026-11-18)
+
+The pin moved from `5e13a8b161226cbfef3e696c1bd31b8da110e381` (`0.26.0`) to
+`284559cdc4cfb07b0b3f9d6882684e77a58e575b` (tag `v0.29.0`). It is not a
+pin-only bump: three minor releases (0.27, 0.28, 0.29) move the Pi package line
+from 1.4.0 to 1.5.2, and Pi 1.5 stopped re-exporting the `Type` the shipped
+extensions build their tool schemas with, so both modules changed one import.
+Each surface was re-checked at the tag, against a copy of the checkout with its
+own `npm ci` (Pi packages 1.5.2, `typebox` 1.3.27 as installed), and the shipped
+modules were run against those packages rather than read against their types.
+
+- **Dependencies moved 1.4.0 → 1.5.2, and `typebox` is new.** `v0.26.0` declared
+  six direct `@earendil-works/*` dependencies at `1.4.0` and no `typebox`;
+  `v0.29.0` declares seven at `1.5.2` plus `typebox` `1.3.27`. The seventh,
+  `@earendil-works/pi-schema`, became a direct dependency in `v0.28.0` (at
+  `1.5.0`); the modules shipped here build their schemas with TypeBox, not with
+  it. The build's `npm ci` installs them all from the committed lockfile, so no
+  system package changes; `engines` still says `node >=22.19` and the image has
+  Node 24.
+- **`Type` is no longer exported by `@earendil-works/pi-ai` (Pi 1.5).** At
+  1.5.2, `"Type" in await import("@earendil-works/pi-ai")` is `false` while
+  `StringEnum` is still there. Both shipped modules imported `Type` from pi-ai,
+  and against 1.5.2 they do not load at all: `SyntaxError: The requested module
+  '@earendil-works/pi-ai' does not provide an export named 'Type'`. They now
+  import it from `typebox`, which is why that package has to stay a direct
+  dependency. The compatibility module that still offers `Type`
+  (`src/server/extension-pi-ai-compat.ts`) is reached only through
+  `extension-document-imports.ts`, registered for the drop-in folder alone
+  (`documentImports(this.#dropIn, …)` in `reload.ts`), so a built-in gets none.
+- **Extension API 1 to 2 — unchanged.** `POCKET_API` is still `2` and
+  `OLDEST_POCKET_API` still `1`. Discovery is still `ORDER` first, then the other
+  top-level `.ts` files sorted (`reload.ts`), skipping `*.test.ts` and
+  `_`-prefixed names, so `web-search.ts` and `agent-types.ts` load as built-ins
+  and `_agent-types-policy.ts` stays out of the list. Neither module's extension
+  or tool names collide with `RESERVED_EXTENSIONS` or the grown
+  `BUILT_IN_TOOLS` set (`relay_reply` and `design_*` are new there).
+- **Host and launcher — additive.** Every member the two modules use is still on
+  `PocketHost` (`notice`, `agentDir`, `modelInfo`, `subagentModels`);
+  `host.ts` gained members (`host.inbox`, `host.stopToolCall`, stall helpers) and
+  removed none. `src/launcher/options.ts` gained `--access tailscale-serve` and
+  longer help text; `--host`, `--port`, `--cwd` and `--data` are parsed as
+  before, and `bin/pi-pocket.js` still loads `strip-types.js` first.
+- **Portal-embed patch — unchanged.** `src/server/auth.ts` is byte-identical
+  between `v0.26.0` and `v0.29.0`, and `src/server/http/assets.ts` still holds
+  exactly one `frame-ancestors 'self'`; `auth.ts` still holds exactly two
+  `SameSite=Lax`. `images/embed-patch.sh` therefore applies with its
+  exact-count guards intact.
+- **Subagent tool — same model rule, new stall machinery.** The allow-list is
+  unchanged: no list means the session's own model, a list means only the models
+  on it (`extensions/subagents.ts`), and `POST /api/subagent-models` is still the
+  route the entrypoint seeds through (`src/server/http/api.ts`). The
+  `pocket.subagent-courier` task is still there. New in 0.29 are stall watches
+  and stop deadlines around it; they change no interface this packaging uses.
+- **The kimi-k3 override is still needed.** With the shipped `models.json`,
+  `ModelRuntime.getModel("opencode-go", "kimi-k3").compat.supportsStrictMode` is
+  `false`; with `modelsPath: null` the 1.5.2 catalog still says `true`. The
+  entrypoint's merge is kept, and the compat test asserts both halves against the
+  installed packages.
+- **One-way data upgrade, now two steps deep.** Pi Durable 1.5.2 keeps SQLite at
+  schema version 2 (`CURRENT_SQLITE_SCHEMA_VERSION`), so the database file looks
+  the same as under 1.4.0, but it writes `pi.live` at document version **3**
+  (`dist/harness/live.js`) where 1.4.0 — the version `0.26.0` ships — reads
+  version **1**. The older server refuses such a folder with "Document … (pi.live)
+  has newer version 3 than 1" (`dist/documents.js`). Upstream's 0.28.0 notes say
+  the same thing: as soon as a session runs on 0.28, 0.27 and older cannot open
+  the data folder. A volume that the new image has used does not go back to
+  0.26.0.
+- **0.29 schedules are not rollback-safe either.** Upstream's 0.29.0 notes warn:
+  going back to 0.28 after using the new schedules is not safe, because 0.28 does
+  not know paused schedules or time windows, so a paused schedule can go out and a
+  windowed repeat runs all day and night. That matches the code: `pocket.schedules`
+  stays at document version 1 in both, so the older server opens the document
+  instead of refusing it, while `Schedule.paused` and `Repeat.window`
+  (`src/server/docs.ts`, `src/server/when.ts`) exist only at `v0.29.0` and are
+  absent at `v0.28.2`. The fields are simply ignored there. No rollback was run
+  against a live folder; this is a documentation of the shape, the release notes,
+  and the version constants.
+- **Focused runs against the target packages.** In a copy of the `v0.29.0`
+  checkout with its own `npm ci`, with the two modules and their helper copied
+  into `src/server/extensions/`: `node --test /tmp/pocket-runtime-compat.test.mjs`
+  (6 of 6 passed), `AGENT_TYPES_MODULE=…/agent-types.ts node --test
+  agent-types-runtime.test.mjs` (7 of 7), and `WEB_SEARCH_MODULE=…/web-search.ts
+  node --test web-search-runtime.test.mjs` (5 of 5, loopback only).
