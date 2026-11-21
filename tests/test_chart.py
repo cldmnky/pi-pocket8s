@@ -250,6 +250,8 @@ class ChartTests(unittest.TestCase):
             ["--set", "octen.apiKeySecret.name=octen-"],
             ["--set", "octen.apiKeySecret.key=bad key"],
             ["--set", "octen.apiKeySecret.key=key/path"],
+            ["--set", "octen.apiKeySecret.key=."],
+            ["--set", "octen.apiKeySecret.key=.."],
             ["--set", "octen.apiKeySecret=octen"],
         ):
             with self.subTest(extra=extra), self.assertRaises(subprocess.CalledProcessError):

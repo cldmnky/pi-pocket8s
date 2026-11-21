@@ -289,7 +289,7 @@ export async function searchOcten(options: OctenSearchOptions): Promise<OctenSea
         throw statusError(response.status);
     }
 
-    const body = await collect(response, OCTEN_MAX_RESPONSE_BYTES, timeout, timeoutMs);
+    const body = await collect(response, OCTEN_MAX_RESPONSE_BYTES, signal, timeout, timeoutMs);
 
     if (body.overflow) {
         throw new OctenError(
@@ -535,7 +535,10 @@ function parseAnswer(text: string, query: string, count: number, apiKey: string,
         }
 
         const record = entry as Record<string, unknown>;
-        const address = clean(record.url, OCTEN_MAX_URL_CHARS, apiKey);
+        // Never turn a clipped prefix into a different, apparently valid result URL.
+        const address = typeof record.url === "string" && Buffer.byteLength(record.url, "utf8") <= OCTEN_MAX_URL_CHARS
+            ? clean(record.url, OCTEN_MAX_URL_CHARS, apiKey)
+            : undefined;
         let parsed: URL;
 
         try {
@@ -593,6 +596,7 @@ function parseAnswer(text: string, query: string, count: number, apiKey: string,
 async function collect(
     response: Response,
     limit: number,
+    signal: AbortSignal,
     timeout: AbortSignal,
     timeoutMs: number,
 ): Promise<{ text: string; overflow: boolean }> {
@@ -604,15 +608,17 @@ async function collect(
     let overflow = false;
     let detach = (): void => undefined;
     const deadline = new Promise<never>((_, reject) => {
-        const stop = (): void => reject(timeoutError(timeoutMs));
+        const stop = (): void => reject(timeout.aborted
+            ? timeoutError(timeoutMs)
+            : new OctenError("network", "The Octen search was cancelled; nothing was retried."));
 
-        if (timeout.aborted) {
+        if (signal.aborted) {
             stop();
             return;
         }
 
-        timeout.addEventListener("abort", stop, { once: true });
-        detach = () => timeout.removeEventListener("abort", stop);
+        signal.addEventListener("abort", stop, { once: true });
+        detach = () => signal.removeEventListener("abort", stop);
     });
 
     // The deadline may fire after the body is read; nobody awaits it then, so keep it handled.

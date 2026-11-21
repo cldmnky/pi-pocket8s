@@ -240,6 +240,27 @@ test("a warning from the service and dropped results are reported, not hidden", 
     assert.doesNotMatch(text, /user:password/, "the dropped address is not echoed back");
 });
 
+test("an oversized result URL is dropped rather than clipped to a different address", async () => {
+    const net = mockTransport(() => json({
+        code: 0,
+        data: { results: [{ url: `https://example.test/${"a".repeat(2100)}` }] },
+    }));
+    const search = await searchOcten({ query: "long URL", apiKey: KEY, fetchImpl: net.fetchImpl });
+    assert.deepEqual(search.hits, []);
+    assert.equal(search.skipped, 1);
+});
+
+test("caller cancellation stops a stalled response body", async () => {
+    const controller = new AbortController();
+    const net = mockTransport(() => new Response(new ReadableStream({
+        pull() { controller.abort(); },
+    })));
+    await assert.rejects(
+        searchOcten({ query: "cancel", apiKey: KEY, fetchImpl: net.fetchImpl, signal: controller.signal }),
+        /cancelled/,
+    );
+});
+
 test("provider text is flattened and bounded before it reaches the answer", async () => {
     const net = mockTransport(() =>
         json({
