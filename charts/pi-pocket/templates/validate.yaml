@@ -45,3 +45,15 @@
 {{- if not (has .Values.serviceAccount.namespaceRole (list "admin" "edit" "view" "")) -}}
 {{- fail "serviceAccount.namespaceRole must be admin, edit, view, or empty" -}}
 {{- end -}}
+{{- if .Values.octen.enabled -}}
+{{- /* The key is an existing Secret, so both halves have to be named and valid:
+       a typo here is a pod that will not start, not a search that fails later. */ -}}
+{{- $name := default "" .Values.octen.apiKeySecret.name -}}
+{{- $key := default "" .Values.octen.apiKeySecret.key -}}
+{{- if or (not (regexMatch "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$" $name)) (gt (len $name) 253) -}}
+{{- fail "octen.apiKeySecret.name must be an existing Secret name in this namespace (lowercase letters, digits, - and .)" -}}
+{{- end -}}
+{{- if or (not (regexMatch "^[-._a-zA-Z0-9]+$" $key)) (gt (len $key) 253) (eq $key ".") (eq $key "..") -}}
+{{- fail "octen.apiKeySecret.key must be a Secret data key (letters, digits, -, _ and .)" -}}
+{{- end -}}
+{{- end -}}

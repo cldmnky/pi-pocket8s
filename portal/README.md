@@ -137,7 +137,7 @@ left untouched:
 | `api-keys.json` | JSON object mapping allowed environment names to values. |
 | `authorized_keys` | OpenSSH public keys, one per line. Comments and blank lines allowed. |
 | `known_hosts` | Free-form `known_hosts` text. |
-| `web-search.json` | `{"provider":"…","model":"…"}`: which model the agent searches the web with, through that provider's own search API. Absent (or empty) means the agent chooses, or its users do. The key is deleted when the setting is cleared. |
+| `web-search.json` | `{"provider":"…","model":"…"}`: which engine the agent searches the web with — a model, through that provider's own search API, or Octen's search API as `{"provider":"octen","model":"search"}`. Absent (or empty) means the agent chooses, or its users do. The key is deleted when the setting is cleared. |
 
 Allowed API key names: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
 `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`,
@@ -153,6 +153,15 @@ The entrypoint points the agent's web-search configuration at that file, so the
 portal's choice takes precedence over one made inside a session, and the agent's
 `web_search_config` tool reports that the portal owns it rather than pretending to
 save. Like provider keys, it applies when the agent restarts.
+
+The portal's own form is two free-text fields, so `octen` / `search` needs no
+registry entry and no portal change: the value it stores is exactly the pin the
+agent reads. The Octen credential is **not** part of this Secret and not part of
+`api-keys.json`: the chart mounts it as the `OCTEN_API_KEY` environment variable
+from the separate `octen-api-key` Secret when `octen.enabled` is set, which is why
+a rotated key needs a pod restart. A portal pin naming a model provider still
+behaves as before; a pin naming `octen` is reported by the agent's tool as the
+portal's choice, including when the key is missing.
 
 ## HTTP API
 

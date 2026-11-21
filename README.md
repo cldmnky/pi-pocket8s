@@ -277,7 +277,8 @@ model does the searching is chosen in one of two places:
   restarts. While it is set it takes precedence, and the agent's own tool says so.
 - **In a session**, by asking: the `web_search_config` tool lists the search models this install can
   use and sets or clears one ("use Gemini for web searches", "which model is searching?"). It
-  validates the model against what the install actually has.
+  validates the model against what the install actually has. Octen is the exception: a direct
+  search API rather than a model, pinned the same way — see [Octen](#octen-search-without-a-model).
 
 The session choice is kept in `~/.pi/agent/web-search.json` in the workspace home
 (`PI_WEB_SEARCH_CONFIG` moves it), so it can also be set by hand:
@@ -304,6 +305,56 @@ Costs and access: a search is a **billable model call on the install's own provi
 conversation uses. Nothing is fetched from a search provider that the install has no credentials
 for, and no search runs unless the agent calls the tool. Details, verification and the vendored
 upstream source: [`extensions/web-search/`](extensions/web-search/README.md).
+
+### Octen: search without a model
+
+**Octen** is the one choice that is not a model. `POST https://api.octen.ai/search` takes a query
+and a result count and answers with links, titles, highlights and timestamps, so no model sits
+between the question and the results. It is off unless something pins it, and it needs no model
+registry entry:
+
+```json
+{ "provider": "octen", "model": "search" }
+```
+
+In a session: `web_search_config action=set provider=octen model=search`. `action=list` offers
+`octen/search` once the key is present, and `action=show` says which key it needs.
+
+The key is **never a Helm value**. It stays in an existing Secret in the workspace namespace
+(`octen-api-key`, data key `OCTEN-API-KEY` by default), and the chart is asked to mount it:
+
+```yaml
+octen:
+  enabled: true                 # default false: nothing contacts Octen
+  apiKeySecret:
+    name: octen-api-key
+    key: OCTEN-API-KEY
+```
+
+The chart reads that Secret and never creates or edits it; a missing Secret keeps the pod from
+starting. The value reaches the agent as the environment variable `OCTEN_API_KEY`, which is fixed
+at container start: **after rotating the Secret, restart the pod**
+(`kubectl rollout restart deployment/pi-pocket`) or the old key stays in use.
+
+Who is in charge, exactly: the **portal's** Web search setting still wins. When an operator has set
+one, the entrypoint points the agent at the portal's read-only copy, so a session's
+`web_search_config set` reports that the portal owns the choice instead of changing it. With no
+portal setting, a pin written in a session goes into `~/.pi/agent/web-search.json` in the workspace
+home, and that file is **workspace-wide**: every conversation in the workspace searches with it,
+not only the session that set it. The portal's file accepts the same pair (provider `octen`, model
+`search`).
+
+What it does and does not do: it returns the links, highlights and times Octen sends, and says
+plainly when no result came back — an empty answer is never presented as grounding. A query longer
+than 500 characters is refused before any request. The address is fixed to
+`https://api.octen.ai/search` and a redirect is refused, so the key goes nowhere else. A call is
+billable, so it is **not retried automatically** — and an interrupted search is not rerun on
+recovery either: 401, 403, 429, a redirect, a nonzero API `code`, an unreadable or oversized answer,
+and a timeout all come back as a failed tool call with a fixed reason, with no response body,
+header or exception text quoted. `urls` still works: Octen does not fetch pages, so those addresses
+are read locally by the same bounded reader `web_fetch` uses (which stays replay-safe: it is a
+read). The credential is never written into a result, and search text is treated as untrusted
+provider text (flattened, bounded, and reported as findings, not instructions).
 
 ### Reading pages: `web_fetch`
 
