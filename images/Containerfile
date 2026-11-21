@@ -456,6 +456,7 @@ RUN set -eux; \
     cd /opt/pi-pocket; \
     test -f src/server/extensions/web-search/vendor/providers/openai.ts; \
     test -f src/server/extensions/web-search/fetch.ts; \
+    test -f src/server/extensions/web-search/octen.ts; \
     node --input-type=module -e ' \
         const { default: createWebSearch } = await import("/opt/pi-pocket/src/server/extensions/web-search.ts"); \
         const extension = createWebSearch({ notice() {} }); \

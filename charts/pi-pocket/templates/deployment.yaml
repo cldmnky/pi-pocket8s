@@ -98,6 +98,16 @@ spec:
               value: /run/github-broker-ca/ca.crt
             {{- end }}
             {{- end }}
+            {{- if .Values.octen.enabled }}
+            # Read from an existing Secret, never from Helm values. An environment
+            # variable is fixed at container start: a rotated Secret needs a restart.
+            - name: OCTEN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.octen.apiKeySecret.name | quote }}
+                  key: {{ .Values.octen.apiKeySecret.key | quote }}
+                  optional: false
+            {{- end }}
           volumeMounts:
             {{- if include "pocket.githubEnabled" . }}
             - name: github-broker

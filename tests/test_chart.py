@@ -215,6 +215,46 @@ class ChartTests(unittest.TestCase):
             "pin a full commit sha: the build checks git rev-parse HEAD against it",
         )
 
+    def test_octen_search_key_is_opt_in_and_never_a_helm_value(self):
+        """Octen's key lives in an existing Secret; the chart only references it, and only when asked."""
+        docs = render()
+        container = find(docs, "Deployment", "pi-pocket")["spec"]["template"]["spec"]["containers"][0]
+        self.assertNotIn("OCTEN_API_KEY", {item["name"] for item in container["env"]})
+        self.assertFalse(any("octen" in item["metadata"]["name"] for item in docs),
+                         "the chart never creates the Secret")
+        values = yaml.safe_load((ROOT / "charts/pi-pocket/values.yaml").read_text())["octen"]
+        self.assertEqual(set(values), {"enabled", "apiKeySecret"},
+                         "no credential can be passed through Helm values")
+        self.assertIs(values["enabled"], False)
+        self.assertEqual(values["apiKeySecret"], {"name": "octen-api-key", "key": "OCTEN-API-KEY"})
+
+        enabled = render("--set", "octen.enabled=true")
+        container = find(enabled, "Deployment", "pi-pocket")["spec"]["template"]["spec"]["containers"][0]
+        env = {item["name"]: item for item in container["env"]}
+        self.assertEqual(env["OCTEN_API_KEY"]["valueFrom"]["secretKeyRef"],
+                         {"name": "octen-api-key", "key": "OCTEN-API-KEY", "optional": False})
+        self.assertNotIn("value", env["OCTEN_API_KEY"], "the key is never rendered into the manifest")
+        self.assertFalse(any("octen" in item["metadata"]["name"] for item in enabled))
+
+        custom = render("--set", "octen.enabled=true", "--set", "octen.apiKeySecret.name=team.octen",
+                        "--set", "octen.apiKeySecret.key=api-key")
+        container = find(custom, "Deployment", "pi-pocket")["spec"]["template"]["spec"]["containers"][0]
+        env = {item["name"]: item for item in container["env"]}
+        self.assertEqual(env["OCTEN_API_KEY"]["valueFrom"]["secretKeyRef"],
+                         {"name": "team.octen", "key": "api-key", "optional": False})
+
+        for extra in (
+            ["--set", "octen.apiKeySecret.name="],
+            ["--set", "octen.apiKeySecret.key="],
+            ["--set", "octen.apiKeySecret.name=Octen_Key"],
+            ["--set", "octen.apiKeySecret.name=octen-"],
+            ["--set", "octen.apiKeySecret.key=bad key"],
+            ["--set", "octen.apiKeySecret.key=key/path"],
+            ["--set", "octen.apiKeySecret=octen"],
+        ):
+            with self.subTest(extra=extra), self.assertRaises(subprocess.CalledProcessError):
+                render("--set", "octen.enabled=true", *extra)
+
     def test_reject_unsafe_options(self):
         for options in (("replicas=2",), ("openshift.pocketSCC=privileged",), ("serviceAccount.namespaceRole=cluster-admin",), ("ingress.pocketHost=",), ("ingress.portalHost=",), ("ingress.enabled=false",)):
             with self.subTest(options=options), self.assertRaises(subprocess.CalledProcessError):

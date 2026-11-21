@@ -13,7 +13,9 @@ Two tools, two very different mechanisms:
 - **`web_search`** runs through the **model provider's own search API**, not a
   scraper: Google Gemini grounding (and URL Context), OpenAI and Codex Responses,
   xAI Grok, Anthropic, DeepSeek, Ollama Cloud, OpenCode Zen/Go. It is a billable
-  model call on the install's credentials.
+  model call on the install's credentials. One pin does not use a model at all:
+  `{"provider":"octen","model":"search"}` calls the Octen search API directly —
+  see [Octen](#octen-a-search-api-not-a-model) below.
 - **`web_fetch`** reads one http(s) address itself — a plain HTTP GET, no model,
   no cost — and returns the page as text. It is what turns a search result into
   something the agent has actually read.
@@ -24,9 +26,11 @@ Two tools, two very different mechanisms:
 | `web-search/select.ts` | Which model a search runs on when the install has not named one. |
 | `web-search/model.ts` | Pi's model runtime, and the context shim the vendored code expects. |
 | `web-search/fetch.ts` | `web_fetch`: URL rules, the bounded read, HTML → text. Imports nothing, so `node --test` covers it. |
+| `web-search/octen.ts` | Octen: the direct search API, its pin, its errors and its answer text. Imports only `fetch.ts`, so `node --test` covers it. |
 | `web-search/vendor/` | pi-web-search 1.7.0, unmodified — see `NOTICE.md`. |
 | `web-search.test.mjs` | Unit test for the picker. `make test` runs it. |
 | `web-fetch.test.mjs` | Unit test for the fetch module, against a loopback server. `make test` runs it. |
+| `../octen.test.mjs` | Unit test for the Octen adapter, fixtures and a loopback server only. `make test` runs it. |
 
 Two layers exist because pi-web-search is a **Pi** extension (`pi.registerTool`,
 pi-tui rendering) and Pi Pocket loads **Pi Durable** extensions
@@ -109,6 +113,69 @@ mistaken for a search that worked.
 Costs, from the operator's account: a search is a model call on the search
 provider, and the result text then goes to the model the conversation is using.
 Each search is bounded at 180 seconds.
+
+## Octen: a search API, not a model
+
+Octen is the exception the rest of this file describes. `POST https://api.octen.ai/search` takes
+`{query, count}` and answers with links, so the search is one API call with no model in the middle:
+no model registry entry, no provider dialect, no tokens. It is pinned like a model:
+
+```json
+{ "provider": "octen", "model": "search" }
+```
+
+`web_search_config action=set provider=octen model=search` writes that pin (Octen has one operation,
+so any other model id is refused as a typo), `action=list` offers `octen/search` once
+`OCTEN_API_KEY` is set, and `action=show` reports the pin, its owner and whether the key is present.
+Octen is **never** chosen automatically: a pin, from the portal or from a session, is the only way it
+runs.
+
+The adapter (`web-search/octen.ts`) is written against the documented contract:
+
+| Item | Value |
+| --- | --- |
+| Endpoint | `POST https://api.octen.ai/search`, always: no environment override, and a redirect is refused rather than followed, so the key is only ever sent there |
+| Credential | `Authorization: Bearer $OCTEN_API_KEY`, read at call time |
+| Request | `{"query": "…", "count": 10}` — query ≤ 500 characters, count 1..100 (clamped) |
+| Success | `{"code":0, "msg", "request_id", "data":{"results":[{title,url,highlight,time_published,time_last_crawled}]}, "meta":{"usage","warning"}}` |
+| Failure | any nonzero `code` is an error, even with HTTP 200; the message is a fixed sentence |
+| Timeout | 20 s for the call, body read included: a stalled body is a timeout, not a hang |
+
+Behaviour worth knowing:
+
+- **No silent retries, and no replay.** A search is billable, so a 401, 403, 429, a redirect, a
+  nonzero `code`, a malformed or oversized answer, or a timeout comes back as one failed tool call
+  with the reason, and the adapter stops there. `web_search` is declared `replay: "unsafe"` for the
+  same reason: after an interruption neither backend's call is repeated on recovery. (`web_fetch` is
+  still `replay: "safe"`: it is a plain read.)
+- **Errors quote nothing from the service.** A status, an Octen error `code` and a fixed sentence —
+  never a response body, a header value or a transport exception message.
+- **The credential never reaches the answer.** It goes into one request header, and every field that
+  comes back is redacted against it **before** it is truncated, so a cut cannot leave half a key.
+- **Bounded, and untrusted.** The response read is capped at 2 MB, excerpts at 800 characters, titles
+  at 300, and the answer keeps at most 10 results. Control characters in provider text are removed,
+  and a result whose `url` is not a plain http(s) address (or carries `user:password@`) is dropped and
+  counted instead of echoed.
+- **No grounding without results.** An empty `results` array says "no results" and adds that nothing
+  was grounded.
+- **`urls` still works.** Octen has no URL-context operation, so the requested addresses are read
+  locally by the same bounded reader `web_fetch` uses: at most 20 pages, 30 s each, and 16 KB of page
+  text in the answer.
+- **Who owns the pin.** The portal's Web search setting still wins, because `PI_WEB_SEARCH_CONFIG`
+  points at the portal's read-only copy; `set` then reports that the portal owns the choice. With no
+  portal setting, a session's pin is `~/.pi/agent/web-search.json` in the workspace home and applies
+  **workspace-wide**, to every conversation — not only to the session that wrote it.
+
+The key comes from the pod environment. The chart's `octen.enabled` mounts
+`OCTEN_API_KEY` from an existing Secret (`octen-api-key`, field `OCTEN-API-KEY` by default); it is
+never a Helm value. Because it is an environment variable, a rotated Secret needs a pod restart.
+
+Tests: `octen.test.mjs` covers the fixed request shape, bounds, empty results, dropped results, the
+redirect refusal, each error path, redaction before truncation, both timeouts and the pin helpers,
+with an injected mock transport and a loopback server for the URL reads. The runtime half
+(`../web-search-runtime.test.mjs`) drives the real tools with `octen/search` pinned and mocks the one
+fixed address in the test process, including a check that a pin naming a model provider never reaches
+the Octen branch and that an Octen redirect is not followed.
 
 ## Reading a page: `web_fetch`
 

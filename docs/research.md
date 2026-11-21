@@ -6,6 +6,7 @@
 - [OpenShift 4.22 SCC documentation](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/authentication_and_authorization/managing-pod-security-policies).
 - [Red Hat: nested containers with user namespaces](https://developers.redhat.com/articles/2024/12/02/enable-nested-containers-openshift-dev-spaces-user-namespaces).
 - [Kubernetes user namespaces](https://kubernetes.io/docs/concepts/workloads/pods/user-namespaces/): `hostUsers: false`, idmapped volume support, limits and isolation boundaries.
+- [Octen search API reference](https://docs.octen.ai/api-reference/search): `POST https://api.octen.ai/search`, `Authorization: Bearer` (or `x-api-key`), `{query, count}`, `{code, msg, request_id, data:{query, results:[{title,url,highlight,time_published,time_last_crawled}]}, meta:{usage, warning}}`.
 - [RHEL 10 container documentation](https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/10/html/building_running_and_managing_containers/), [UBI image catalog](https://catalog.redhat.com/software/containers/ubi10/ubi/66f2b5e7ecb3d1d2f7ee5667).
 
 Upstream was inspected directly at commit `55849dd3769f1cc265404443193c1ab4385aeedb` (`0.11.0`); the move to `e1298a0e8e674211d37ef71ecabef0ec8a9af13c` (`0.12.2`) re-checked the surfaces this packaging depends on — the launcher and lockfile, the two lines the portal-embed patch rewrites, the extension loader and host interface, and the subagent tool two shipped extensions build on. The re-pin to `26542deded0123d6b217828ed2f71f566d9a7a19` (`0.17.0`) re-checked the same surfaces: launcher flags (`--host`, `--port`, `--cwd`, `--data`), the embed-patch lines (`frame-ancestors 'self'` once, `SameSite=Lax` twice), the extension loader and host interface, the subagent tool plus the owner's new allow-list for other models (`subagentModels`), and the courier marker `pocket.subagent-courier`. It adds one runtime dependency, `@earendil-works/pi-mcp`, which the existing `npm ci` from the committed lockfile installs; no new system package is needed. It contains a lockfile and launches through `bin/pi-pocket.js`; the server is not a static frontend. It persists SQLite and settings, has an owner sign-in key, and already implements scoped invites and owner/steer/view access. Its CLI supports explicit host, port, working and data directories. That avoids an interactive launcher in Kubernetes. Forwarded HTTPS headers are used for external URLs and secure cookies.
@@ -509,3 +510,102 @@ modules were run against those packages rather than read against their types.
   (6 of 6 passed), `AGENT_TYPES_MODULE=…/agent-types.ts node --test
   agent-types-runtime.test.mjs` (7 of 7), and `WEB_SEARCH_MODULE=…/web-search.ts
   node --test web-search-runtime.test.mjs` (5 of 5, loopback only).
+
+## Octen search: a direct search API beside the model search (2026-11-21)
+
+`web_search` had one mechanism: a billable call to a *model* provider's own search tool. Octen is a
+search API, not a model — `POST https://api.octen.ai/search` takes a query and a count and returns
+links — so it cannot be reached through `select.ts`, the model registry, or the vendored provider
+code. It is a separate branch in the adapter, pinned with the pin file that already exists:
+
+```json
+{ "provider": "octen", "model": "search" }
+```
+
+Decisions, and why:
+
+- **Only a pin turns it on.** Octen is not in `PREFERRED` and is never picked automatically. The
+  chart's `octen.enabled` defaults to `false`, and even then nothing contacts Octen until something
+  pins `octen/search` — a session, a hand-edited file, or the portal. A default-off switch plus an
+  explicit pin means a fresh install cannot start spending on an API nobody chose.
+- **No model registry entry, no fake model.** `web_search_config` recognises `octen/search` by its
+  provider id, and `set`, `list` and `show` handle it before any registry lookup, so an install with
+  no models at all can still search. A pin naming Octen with any other model id is refused as a typo
+  rather than stored and left to fail later.
+- **The workspace pin is not a session override.** The file `web_search_config set` writes is
+  `~/.pi/agent/web-search.json` in the shared workspace home: it applies to **every** conversation in
+  the workspace, not only to the session that wrote it. The portal's mounted copy still wins, because
+  the entrypoint points `PI_WEB_SEARCH_CONFIG` at `/run/pocket-config/web-search.json`; writes there
+  fail with EROFS and the tool reports that the portal owns the choice. The portal's form is two
+  free-text fields validated against `^[a-z0-9][a-z0-9-]{0,62}$` for the provider, so `octen` /
+  `search` needed no portal schema or UI change — only a hint that a non-model choice exists.
+- **The credential is a Kubernetes Secret, never a Helm value.** The chart adds one opt-in env
+  entry, `OCTEN_API_KEY`, as a `secretKeyRef` to an existing Secret (`octen-api-key`, data key
+  `OCTEN-API-KEY` by default; `octen.apiKeySecret` overrides either). `validate.yaml` fails the
+  render on an empty or malformed name/key, and the chart never creates or writes that Secret.
+  Because it is an environment variable, a rotated Secret needs a pod restart; mounting it as a file
+  would avoid that but would also mean a second credential layout beside `api-keys.json`, and the
+  agent reads its key once per pod start anyway.
+- **The documented contract, not guesses.** The adapter is written against
+  <https://docs.octen.ai/api-reference/search>: `POST /search`, `Authorization: Bearer …`
+  (`x-api-key` is also documented and unused here), `{query, count}` with query ≤ 500 characters and
+  count 1..100, and the `{code, msg, request_id, data:{results:[…]}, meta:{usage, warning}}`
+  envelope. A nonzero `code` is an error even with HTTP 200.
+- **One destination, and no redirects.** The endpoint is `https://api.octen.ai/search`, fixed in the
+  module: there is deliberately **no** `OCTEN_API_URL` or other address override, so an environment
+  change cannot move the key to a server the operator did not choose. The request is sent with
+  `redirect: "manual"` and a 3xx answer is refused as its own error (`kind: "redirect"`) rather than
+  followed. Tests inject a mock transport (`fetchImpl` in `octen.ts`, a mocked `fetch` in the tool
+  test) instead of pointing the address somewhere else.
+- **No silent retries, and no replay.** A search is billable, so 401, 403, 429, a redirect, a
+  nonzero code, a malformed or oversized answer, and a timeout are each reported once, with what to
+  do, and the adapter stops. `web_search` is declared `replay: "unsafe"` for the same reason: after
+  an interruption neither backend's call is repeated on recovery. `web_fetch` keeps `replay: "safe"`
+  because it is a plain read of one page.
+- **Errors quote nothing from the service.** The messages carry a status, an Octen error `code` and
+  a fixed sentence, and nothing else: no response body, no header value (`Retry-After`,
+  `x-request-id`, `Location`) and no transport or exception text. The first pass passed the API's
+  `msg` through, which is free text from a third party and does not belong in a tool error.
+- **Redaction happens before truncation.** Every returned field (title, URL, highlight, both
+  timestamps, `meta.warning`, `request_id`) is redacted against the key first and cut second, so a
+  truncated field can never end in half a credential. A test puts the key just inside the old
+  truncation boundary and asserts no prefix of it survives.
+- **Bounded, and treating the content as untrusted.** The response read stops at 2 MB (streamed, not
+  buffered first), excerpts at 800 characters, titles at 300, the answer at the requested count
+  (default 10), and a call at 20 s. Provider text is flattened and stripped of control characters. A
+  result whose `url` is not a plain http(s) address, or that carries `user:password@`, is dropped and
+  counted rather than echoed into the answer. The credential goes into one header only.
+- **A stalled body is a timeout.** The body read is raced against the call's deadline, so a service
+  that answers headers and then stops sending bytes fails with the same typed `timeout` error as an
+  unanswered request instead of holding the tool call open. The size cap still applies, and the read
+  is cancelled on either path.
+- **No grounding without results.** An empty `results` array says "no results" and that nothing was
+  grounded; the tool's `grounded` detail is true only when a hit came back. A 401 leaves `grounded`
+  unset.
+- **`urls` stays, and stays local.** Octen has no URL-context operation, so the requested addresses
+  are read by the same bounded reader `web_fetch` uses (5 redirects, 30 s, 5 MB each; at most 20
+  URLs and 16 KB of page text in the answer). Sending them to a model would have been a second
+  billable call and a different answer.
+
+Verification (offline; no live credential, no cluster change):
+
+- `node --test extensions/octen.test.mjs` — 23 tests with an injected mock transport, plus a
+  loopback server for the URL reads: the fixed address, POST, `redirect: "manual"`, count and query
+  bounds, empty results, dropped results, warnings, flattened text, redaction before truncation in
+  every field, local URL reads, a redirect refusal (with the `Location` value absent), 401/403/429/500
+  with their bodies and headers absent, nonzero code, six malformed shapes, an oversized body, a
+  stalled request, a stalled body read (both typed `timeout`), a failed body read, a transport
+  failure without its message, a missing key, `OCTEN_API_KEY` at call time with no endpoint override, and the pin/owner
+  helpers.
+- `WEB_SEARCH_MODULE=…/web-search.ts node --test extensions/web-search-runtime.test.mjs` — 14 tests
+  against the installed Pi packages, including `octen/search` pinned against a mocked fixed address,
+  no results, a 401 whose body and header are not quoted, an answer with no key in it, an Octen redirect
+  that is not followed, `web_search` `replay: "unsafe"` with `web_fetch` still `"safe"`, a missing
+  key, the config tool's list/set/show, and a pin naming `openai-codex` proving the model path is
+  still the one taken (the mocked Octen address was never called).
+- `helm template` and `tests/test_chart.py` under Helm **3.19.0** and **4.3.0**: no `OCTEN_API_KEY`
+  by default, the `secretKeyRef` (with `optional: false`) when enabled, custom name/key, no Secret
+  created by the chart, and rejected empty/malformed names and keys.
+- **Not verified live:** no real Octen credential was used and no cluster was touched, so the live
+  API's actual responses are unconfirmed beyond the documented contract. The owner applies
+  `octen.enabled` and pins the choice after review.

@@ -29,6 +29,19 @@ persistence:
   retain: true
 runtimeSecret:
   existingSecret: ""
+# Octen web search: the agent's web_search tool can search Octen's API directly,
+# a link list with no model call, pinned with web_search_config as
+# {provider: octen, model: search}. Off by default: enable it and pin octen/search,
+# and nothing else changes. The key is never a Helm value; it stays in an existing
+# Secret. It reaches the pod as an environment variable, so rotating the Secret
+# needs a pod restart (kubectl rollout restart) to take effect.
+octen:
+  enabled: false
+  # Must exist in this namespace, with this data key. The chart only reads it and
+  # never creates or edits it; a missing Secret keeps the pod from starting.
+  apiKeySecret:
+    name: octen-api-key
+    key: OCTEN-API-KEY
 portal:
   enabled: true
   # GitHub mode REQUIRES a different, pre-created management namespace.
